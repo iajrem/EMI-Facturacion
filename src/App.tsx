@@ -28,6 +28,7 @@ import {
   X,
   LogIn,
   LogOut,
+  ExternalLink,
   User as UserIcon,
   CheckCircle2 as CheckIcon
 } from 'lucide-react';
@@ -716,6 +717,24 @@ function MainApp() {
             <p className="text-slate-500 text-sm">Gestiona tus turnos y liquidaciones de forma segura en la nube.</p>
           </div>
           <div className="space-y-4">
+            <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl text-amber-800 text-sm">
+              <p className="font-semibold mb-1 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4" />
+                Bloqueo de terceros detectado
+              </p>
+              <p className="opacity-90">
+                Tu navegador está bloqueando las cookies de terceros, lo que impide el inicio de sesión dentro de esta ventana.
+              </p>
+              <a 
+                href={window.location.href} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="mt-3 inline-flex items-center gap-2 font-bold text-amber-900 hover:underline"
+              >
+                Abrir en una pestaña nueva <ExternalLink className="w-4 h-4" />
+              </a>
+            </div>
+
             {authError && (
               <div className="p-3 bg-rose-50 text-rose-600 text-xs rounded-xl flex items-center gap-2 border border-rose-100">
                 <AlertCircle className="w-4 h-4 shrink-0" />

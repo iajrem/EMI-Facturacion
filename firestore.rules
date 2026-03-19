@@ -1,40 +1,42 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-
     // ===============================================================
     // Assumed Data Model
     // ===============================================================
     //
-    // Collection: /users/{userId}
+    // Collection: users
+    // Document ID: {userId}
     // Fields:
     //   - uid: string (required)
     //   - email: string (required, email format)
     //   - displayName: string (optional)
-    //   - photoURL: string (optional)
-    //   - createdAt: string (optional, date-time format)
+    //   - photoURL: string (optional, URL format)
+    //   - createdAt: string (optional, ISO 8601)
     //
-    // Collection: /users/{userId}/records/{recordId}
+    // Collection: users/{userId}/records
+    // Document ID: {recordId}
     // Fields:
     //   - id: string (required)
     //   - userId: string (required)
     //   - date: string (required)
     //   - startTime: string (required)
     //   - endTime: string (required)
-    //   - hours: map (required)
-    //   - ava: map (required)
-    //   - patients: map (required)
-    //   - applyPatients: bool (required)
-    //   - isDefinitive: bool (required)
-    //   - createdAt: string (optional, date-time format)
+    //   - hours: map (optional)
+    //   - ava: map (optional)
+    //   - patients: map (optional)
+    //   - applyPatients: bool (optional)
+    //   - isDefinitive: bool (optional)
+    //   - createdAt: string (optional, ISO 8601)
     //
-    // Collection: /users/{userId}/deductions/{deductionId}
+    // Collection: users/{userId}/deductions
+    // Document ID: {deductionId}
     // Fields:
     //   - id: string (required)
     //   - userId: string (required)
     //   - label: string (required)
     //   - amount: number (required)
-    //   - createdAt: string (optional, date-time format)
+    //   - createdAt: string (optional, ISO 8601)
     //
     // ===============================================================
 
@@ -50,18 +52,20 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function isAdmin() {
-      return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          (request.auth.token.email == "iajremncx@gmail.com" && request.auth.token.email_verified == true));
-    }
-
-    function hasOnlyAllowedFields(fields) {
-      return request.resource.data.keys().hasOnly(fields);
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
     }
 
     function isValidEmail(email) {
       return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUrl(url) {
+      return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    function isValidDateString(dateStr) {
+      return dateStr is string && dateStr.matches("^\\d{4}-\\d{2}-\\d{2}.*");
     }
 
     // ===============================================================
@@ -69,31 +73,25 @@ service cloud.firestore {
     // ===============================================================
 
     function isValidUser(data) {
-      return hasOnlyAllowedFields(['uid', 'email', 'displayName', 'photoURL', 'createdAt', 'role']) &&
-             data.uid is string && data.uid.size() > 0 &&
-             isValidEmail(data.email) &&
-             (data.role == 'user' || isAdmin());
+      return data.uid is string && data.uid.size() > 0 && data.uid.size() < 128 &&
+             data.email is string && isValidEmail(data.email) &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() < 100)) &&
+             (!('photoURL' in data) || isValidUrl(data.photoURL));
     }
 
     function isValidRecord(data) {
-      return hasOnlyAllowedFields(['id', 'userId', 'date', 'startTime', 'endTime', 'hours', 'ava', 'patients', 'applyPatients', 'isDefinitive', 'createdAt']) &&
-             data.id is string && data.id.size() > 0 &&
+      return data.id is string && data.id.size() > 0 &&
              data.userId is string && data.userId.size() > 0 &&
-             data.date is string &&
-             data.startTime is string &&
-             data.endTime is string &&
-             data.hours is map &&
-             data.ava is map &&
-             data.patients is map &&
-             data.applyPatients is bool &&
-             data.isDefinitive is bool;
+             data.date is string && isValidDateString(data.date) &&
+             data.startTime is string && data.endTime is string &&
+             (!('applyPatients' in data) || data.applyPatients is bool) &&
+             (!('isDefinitive' in data) || data.isDefinitive is bool);
     }
 
     function isValidDeduction(data) {
-      return hasOnlyAllowedFields(['id', 'userId', 'label', 'amount', 'createdAt']) &&
-             data.id is string && data.id.size() > 0 &&
+      return data.id is string && data.id.size() > 0 &&
              data.userId is string && data.userId.size() > 0 &&
-             data.label is string && data.label.size() > 0 &&
+             data.label is string && data.label.size() > 0 && data.label.size() < 100 &&
              data.amount is number;
     }
 
@@ -102,24 +100,23 @@ service cloud.firestore {
     // ===============================================================
 
     match /users/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
-      allow create: if isOwner(userId) && isValidUser(request.resource.data);
-      allow update: if isOwner(userId) && isValidUser(request.resource.data) && 
-                      (request.resource.data.role == resource.data.role || isAdmin());
-      allow delete: if isAdmin();
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && hasRequiredFields(['uid', 'email']) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data);
+      allow delete: if isOwner(userId);
 
       match /records/{recordId} {
-        allow read: if isOwner(userId) || isAdmin();
-        allow create: if isOwner(userId) && isValidRecord(request.resource.data);
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && hasRequiredFields(['id', 'userId', 'date', 'startTime', 'endTime']) && isValidRecord(request.resource.data);
         allow update: if isOwner(userId) && isValidRecord(request.resource.data);
-        allow delete: if isOwner(userId) || isAdmin();
+        allow delete: if isOwner(userId);
       }
 
       match /deductions/{deductionId} {
-        allow read: if isOwner(userId) || isAdmin();
-        allow create: if isOwner(userId) && isValidDeduction(request.resource.data);
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && hasRequiredFields(['id', 'userId', 'label', 'amount']) && isValidDeduction(request.resource.data);
         allow update: if isOwner(userId) && isValidDeduction(request.resource.data);
-        allow delete: if isOwner(userId) || isAdmin();
+        allow delete: if isOwner(userId);
       }
     }
 
