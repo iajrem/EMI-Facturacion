@@ -1289,7 +1289,17 @@ function MainApp() {
                       <input 
                         type="checkbox" 
                         checked={shift.isAVAShift}
-                        onChange={(e) => setShift({ ...shift, isAVAShift: e.target.checked })}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setShift({ ...shift, isAVAShift: checked });
+                          if (checked) {
+                            setQuantities(prev => ({ 
+                              ...prev, 
+                              applyPatients: false,
+                              patients: { day: 0, night: 0, holidayDay: 0, holidayNight: 0 }
+                            }));
+                          }
+                        }}
                         className="w-3 h-3 rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
                       />
                       <span className="text-[10px] font-bold text-indigo-600 uppercase">¿Turno AVA?</span>
@@ -1373,10 +1383,11 @@ function MainApp() {
                       <Users className="w-4 h-4" />
                       <h3 className="text-sm font-bold">Pacientes Atendidos</h3>
                     </div>
-                    <label className="flex items-center gap-2 cursor-pointer">
+                    <label className={`flex items-center gap-2 ${shift.isAVAShift ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
                       <input 
                         type="checkbox" 
                         checked={quantities.applyPatients}
+                        disabled={shift.isAVAShift}
                         onChange={(e) => {
                           const checked = e.target.checked;
                           setQuantities(prev => ({ 
