@@ -149,9 +149,10 @@ interface Rates {
   };
   payroll: {
     uvtValue: number;
-    dependents: number; // Max 10% of gross or 32 UVT
+    dependents: boolean; // 10% of gross or 32 UVT
     prepagada: number; // Max 16 UVT
     pensionVoluntaria: number; // Max 30% of income or 3800 UVT/year
+    interesesVivienda: number; // Max 100 UVT
     avgBilling12Months: number; // For Vacations proportional
     avgBilling6Months: number;  // For Prima proportional
   };
@@ -226,9 +227,10 @@ const DEFAULT_RATES: Rates = {
   },
   payroll: {
     uvtValue: 49786, // Estimated for 2026
-    dependents: 0,
+    dependents: false,
     prepagada: 0,
     pensionVoluntaria: 0,
+    interesesVivienda: 0,
     avgBilling12Months: 0,
     avgBilling6Months: 0,
   }
@@ -699,24 +701,35 @@ function MainApp() {
     // 15 días por año -> 1/24 del promedio mensual
     const vacacionesProporcional = rates.payroll.avgBilling12Months / 24;
 
-    // --- Retefuente Calculation (Procedimiento 1) ---
+    // --- Retefuente Calculation (Procedimiento 1 - Art. 383, 387, 388 ET) ---
     const uvt = rates.payroll.uvtValue;
-    // The tax base includes all income received this month
-    // Note: Prima and Vacations proportional are added here as they are part of the monthly "real" income
     const totalIncomeForTax = gross + primaProporcional + vacacionesProporcional;
-    const baseGravable1 = totalIncomeForTax - legalDeductions;
     
-    // Deductions allowed (capped)
-    const dedDependents = Math.min(totalIncomeForTax * 0.1, 32 * uvt);
+    // 1. Ingresos No Constitutivos de Renta (Legal deductions: Health, Pension, FSP)
+    const netIncome = totalIncomeForTax - legalDeductions;
+    
+    // 2. Deducciones (Art. 387)
+    const dedDependents = rates.payroll.dependents ? Math.min(totalIncomeForTax * 0.1, 32 * uvt) : 0;
     const dedPrepagada = Math.min(rates.payroll.prepagada, 16 * uvt);
-    const dedPensionVol = Math.min(rates.payroll.pensionVoluntaria, totalIncomeForTax * 0.3);
+    const dedInteresesVivienda = Math.min(rates.payroll.interesesVivienda, 100 * uvt);
     
-    const subtotal1 = baseGravable1 - dedDependents - dedPrepagada - dedPensionVol;
+    // 3. Rentas Exentas (Art. 126-1, 126-4)
+    const dedPensionVol = Math.min(rates.payroll.pensionVoluntaria, totalIncomeForTax * 0.3, 3800 * uvt / 12);
     
-    // 25% Exempt Income (Capped at 790 UVT/year -> 65.8 UVT/month)
-    const exempt25 = Math.min(subtotal1 * 0.25, 65.8 * uvt);
+    // 4. Subtotal for 25% Exemption
+    const subtotalForExempt25 = netIncome - dedDependents - dedPrepagada - dedInteresesVivienda - dedPensionVol;
+    const exempt25 = Math.min(subtotalForExempt25 * 0.25, 65.8 * uvt);
     
-    const baseGravableFinal = subtotal1 - exempt25;
+    // 5. Total Deductions + Exemptions
+    const totalDeductionsAndExemptions = dedDependents + dedPrepagada + dedInteresesVivienda + dedPensionVol + exempt25;
+    
+    // 6. Apply 40% Cap (Art. 388)
+    // The cap is 40% of Net Income, but also capped at 1340 UVT/year (111.6 UVT/month)
+    const cap40Percent = Math.min(netIncome * 0.4, 111.6 * uvt);
+    const finalDeductionsAndExemptions = Math.min(totalDeductionsAndExemptions, cap40Percent);
+    
+    // 7. Taxable Base
+    const baseGravableFinal = netIncome - finalDeductionsAndExemptions;
     const baseUVT = baseGravableFinal / uvt;
     
     let retefuente = 0;
@@ -1064,19 +1077,22 @@ function MainApp() {
                         className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono"
                       />
                     </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
-                        Deducción por Dependientes ($)
-                        <span title="Deducción mensual por personas a cargo (máx 10% ingreso o 32 UVT)"><Info className="w-3 h-3 text-slate-400" /></span>
-                      </label>
+                    <div className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-xl">
+                      <div className="flex flex-col">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1">
+                          ¿Tiene Dependientes?
+                          <span title="Deducción del 10% del ingreso bruto (máx 32 UVT) por personas a cargo"><Info className="w-3 h-3 text-slate-400" /></span>
+                        </label>
+                        <span className="text-[10px] text-slate-400">Aplica deducción del 10%</span>
+                      </div>
                       <input 
-                        type="number"
-                        value={rates.payroll.dependents}
+                        type="checkbox"
+                        checked={rates.payroll.dependents}
                         onChange={(e) => setRates({
                           ...rates,
-                          payroll: { ...rates.payroll, dependents: Number(e.target.value) }
+                          payroll: { ...rates.payroll, dependents: e.target.checked }
                         })}
-                        className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono"
+                        className="w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                       />
                     </div>
                     <div>
@@ -1090,6 +1106,21 @@ function MainApp() {
                         onChange={(e) => setRates({
                           ...rates,
                           payroll: { ...rates.payroll, prepagada: Number(e.target.value) }
+                        })}
+                        className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
+                        Intereses de Vivienda ($)
+                        <span title="Intereses pagados por crédito de vivienda o leasing habitacional (máx 100 UVT)"><Info className="w-3 h-3 text-slate-400" /></span>
+                      </label>
+                      <input 
+                        type="number"
+                        value={rates.payroll.interesesVivienda}
+                        onChange={(e) => setRates({
+                          ...rates,
+                          payroll: { ...rates.payroll, interesesVivienda: Number(e.target.value) }
                         })}
                         className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono"
                       />
