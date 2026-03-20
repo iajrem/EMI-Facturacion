@@ -545,7 +545,7 @@ function MainApp() {
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `liquidacion_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `extracto_${new Date().toISOString().split('T')[0]}.csv`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
@@ -555,7 +555,7 @@ function MainApp() {
   // --- Persistence Actions ---
   const saveCurrentCalculation = () => {
     if (!calcName.trim()) {
-      alert('Por favor, ingresa un nombre para guardar la liquidación.');
+      alert('Por favor, ingresa un nombre para guardar el extracto.');
       return;
     }
     if (records.length === 0) {
@@ -574,7 +574,7 @@ function MainApp() {
 
     setSavedCalculations([newSaved, ...savedCalculations]);
     setCalcName('');
-    alert('Liquidación guardada con éxito.');
+    alert('Extracto guardado con éxito.');
   };
 
   const loadCalculation = (saved: SavedCalculation) => {
@@ -584,11 +584,11 @@ function MainApp() {
     setRecords(saved.records);
     setRates(saved.rates);
     setAdditionalDeductions(Array.isArray(saved.additionalDeductions) ? saved.additionalDeductions : []);
-    alert(`Liquidación "${saved.name}" cargada.`);
+    alert(`Extracto "${saved.name}" cargado.`);
   };
 
   const deleteSavedCalculation = (id: string) => {
-    if (confirm('¿Eliminar esta liquidación guardada?')) {
+    if (confirm('¿Eliminar este extracto guardado?')) {
       setSavedCalculations(savedCalculations.filter(s => s.id !== id));
     }
   };
@@ -790,7 +790,7 @@ function MainApp() {
           </div>
           <div className="space-y-2">
             <h1 className="text-2xl font-black text-slate-900 tracking-tight">Calculadora Médica</h1>
-            <p className="text-slate-500 text-sm">Gestiona tus turnos y liquidaciones de forma segura en la nube.</p>
+            <p className="text-slate-500 text-sm">Gestiona tus turnos y extractos de forma segura en la nube.</p>
           </div>
           <div className="space-y-4">
             <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl text-amber-800 text-sm">
@@ -847,7 +847,7 @@ function MainApp() {
             <Stethoscope className="text-white w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-800">Bitácora y Liquidador Médico</h1>
+            <h1 className="text-xl font-bold tracking-tight text-slate-800">Bitácora y Calculadora Médica</h1>
             <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">Colombia 2026 • Jornada Legal</p>
           </div>
         </div>
@@ -1179,7 +1179,7 @@ function MainApp() {
             <section className="pt-6 border-t border-slate-100">
               <div className="flex items-center gap-2 mb-4 text-indigo-600">
                 <FolderOpen className="w-4 h-4" />
-                <h2 className="text-sm font-bold uppercase tracking-widest">Liquidaciones Guardadas</h2>
+                <h2 className="text-sm font-bold uppercase tracking-widest">Extractos Guardados</h2>
               </div>
               
               {savedCalculations.length === 0 ? (
@@ -1575,14 +1575,14 @@ function MainApp() {
                   <Save className="text-indigo-600 w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-slate-800">Guardar Liquidación</h3>
+                  <h3 className="text-sm font-bold text-slate-800">Guardar Extracto</h3>
                   <p className="text-[10px] text-slate-500 uppercase font-bold">Persiste tus datos localmente</p>
                 </div>
               </div>
               <div className="flex-1 w-full flex gap-2">
                 <input 
                   type="text" 
-                  placeholder="Nombre de la liquidación (ej: Marzo 2026)"
+                  placeholder="Nombre del extracto (ej: Marzo 2026)"
                   value={calcName}
                   onChange={(e) => setCalcName(e.target.value)}
                   className="flex-1 bg-white border border-indigo-200 rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
@@ -1609,7 +1609,7 @@ function MainApp() {
           <section className="space-y-6">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-full bg-slate-800 text-white flex items-center justify-center font-bold text-sm">4</div>
-              <h2 className="text-xl font-bold text-slate-800">Liquidación Final</h2>
+              <h2 className="text-xl font-bold text-slate-800">Extracto Final</h2>
             </div>
 
             {records.length > 0 ? (
@@ -1851,7 +1851,7 @@ function MainApp() {
             ) : (
               <div className="bg-white p-10 rounded-3xl border border-slate-200 text-center text-slate-400">
                 <Info className="w-8 h-8 mx-auto mb-4 opacity-20" />
-                <p>Ingresa al menos un turno para calcular la liquidación financiera.</p>
+                <p>Ingresa al menos un turno para calcular el extracto financiero.</p>
               </div>
             )}
           </section>
@@ -1862,7 +1862,7 @@ function MainApp() {
       <footer className="bg-slate-900 text-slate-400 p-10 text-center space-y-4">
         <div className="flex items-center justify-center gap-2 text-white">
           <Stethoscope className="w-5 h-5" />
-          <span className="font-bold tracking-tight">Liquidador Médico Laboral</span>
+          <span className="font-bold tracking-tight">Calculadora Médica Laboral</span>
         </div>
         <p className="text-xs max-w-md mx-auto leading-relaxed">
           Herramienta diseñada para profesionales de la salud en Colombia. 

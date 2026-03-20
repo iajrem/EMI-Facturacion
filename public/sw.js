@@ -1,4 +1,4 @@
-const CACHE_NAME = 'liquidador-medico-v1';
+const CACHE_NAME = 'emipagos-v1';
 const ASSETS = [
   '/',
   '/index.html',
