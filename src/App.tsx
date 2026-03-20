@@ -152,9 +152,8 @@ interface Rates {
     dependents: number; // Max 10% of gross or 32 UVT
     prepagada: number; // Max 16 UVT
     pensionVoluntaria: number; // Max 30% of income or 3800 UVT/year
-    primaPercentage: number;
-    primaBaseAverage: number;
-    vacationProvisionRate: number; // Usually 4.17%
+    avgBilling12Months: number; // For Vacations proportional
+    avgBilling6Months: number;  // For Prima proportional
   };
 }
 
@@ -230,9 +229,8 @@ const DEFAULT_RATES: Rates = {
     dependents: 0,
     prepagada: 0,
     pensionVoluntaria: 0,
-    primaPercentage: 0,
-    primaBaseAverage: 0,
-    vacationProvisionRate: 4.17,
+    avgBilling12Months: 0,
+    avgBilling6Months: 0,
   }
 };
 
@@ -528,7 +526,10 @@ function MainApp() {
     // Add summary
     rows.push([]);
     rows.push(['RESUMEN']);
-    rows.push(['Total Bruto', results.gross]);
+    rows.push(['Total Bruto (Base)', results.gross]);
+    rows.push(['Prima Proporcional', results.primaProporcional]);
+    rows.push(['Vacaciones Proporcionales', results.vacacionesProporcional]);
+    rows.push(['Total Devengado', results.totalGross]);
     rows.push(['Deducciones Legales', results.legalDeductions]);
     rows.push(['Deducciones Adicionales', results.additionalDeductions]);
     rows.push(['Neto a Pagar', results.net]);
@@ -690,13 +691,19 @@ function MainApp() {
     const sumAdditionalDeductions = additionalDeductions.reduce((sum, d) => sum + d.amount, 0);
     const legalDeductions = health + pension + fsp;
 
-    // --- Prima No Constitutiva ---
-    const primaNoConstitutiva = (rates.payroll.primaBaseAverage * rates.payroll.primaPercentage) / 100;
+    // --- Prima Proporcional (6 meses) ---
+    // Medio sueldo cada 6 meses -> 1/12 del promedio mensual
+    const primaProporcional = rates.payroll.avgBilling6Months / 12;
+
+    // --- Vacaciones Proporcionales (12 meses) ---
+    // 15 días por año -> 1/24 del promedio mensual
+    const vacacionesProporcional = rates.payroll.avgBilling12Months / 24;
 
     // --- Retefuente Calculation (Procedimiento 1) ---
     const uvt = rates.payroll.uvtValue;
     // The tax base includes all income received this month
-    const totalIncomeForTax = gross + primaNoConstitutiva;
+    // Note: Prima and Vacations proportional are added here as they are part of the monthly "real" income
+    const totalIncomeForTax = gross + primaProporcional + vacacionesProporcional;
     const baseGravable1 = totalIncomeForTax - legalDeductions;
     
     // Deductions allowed (capped)
@@ -722,23 +729,22 @@ function MainApp() {
       else retefuente = ((baseUVT - 2300) * 0.39 + 770) * uvt;
     }
 
-    // --- Vacation Provision (Informative) ---
-    const vacationProvision = (gross * rates.payroll.vacationProvisionRate) / 100;
-
     const totalDeductions = legalDeductions + sumAdditionalDeductions + retefuente;
-    const net = gross + primaNoConstitutiva - totalDeductions;
+    const totalGross = gross + primaProporcional + vacacionesProporcional;
+    const net = totalGross - totalDeductions;
 
     return {
       totalH,
       totalP,
       totalAVA,
       gross,
+      totalGross,
       health,
       pension,
       fsp,
       retefuente,
-      primaNoConstitutiva,
-      vacationProvision,
+      primaProporcional,
+      vacacionesProporcional,
       legalDeductions,
       additionalDeductions: sumAdditionalDeductions,
       totalDeductions,
@@ -1106,30 +1112,30 @@ function MainApp() {
                     <div className="h-px bg-slate-200 my-2" />
                     <div>
                       <label className="block text-[10px] font-bold text-indigo-500 uppercase mb-1 flex items-center gap-1">
-                        Base Promedio Prima ($)
-                        <span title="Promedio de ingresos de los últimos meses para el cálculo de la prima"><Info className="w-3 h-3 text-indigo-400" /></span>
+                        Promedio Facturado 12 Meses ($)
+                        <span title="Promedio de lo facturado en los últimos 12 meses para el cálculo proporcional de vacaciones"><Info className="w-3 h-3 text-indigo-400" /></span>
                       </label>
                       <input 
                         type="number"
-                        value={rates.payroll.primaBaseAverage}
+                        value={rates.payroll.avgBilling12Months}
                         onChange={(e) => setRates({
                           ...rates,
-                          payroll: { ...rates.payroll, primaBaseAverage: Number(e.target.value) }
+                          payroll: { ...rates.payroll, avgBilling12Months: Number(e.target.value) }
                         })}
                         className="w-full bg-white border border-indigo-100 rounded-xl py-2 px-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono"
                       />
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-indigo-500 uppercase mb-1 flex items-center gap-1">
-                        % Prima No Constitutiva
-                        <span title="Porcentaje de la prima que no constituye salario"><Info className="w-3 h-3 text-indigo-400" /></span>
+                        Promedio Facturado 6 Meses ($)
+                        <span title="Promedio de lo facturado en los últimos 6 meses para el cálculo proporcional de la prima (medio sueldo)"><Info className="w-3 h-3 text-indigo-400" /></span>
                       </label>
                       <input 
                         type="number"
-                        value={rates.payroll.primaPercentage}
+                        value={rates.payroll.avgBilling6Months}
                         onChange={(e) => setRates({
                           ...rates,
-                          payroll: { ...rates.payroll, primaPercentage: Number(e.target.value) }
+                          payroll: { ...rates.payroll, avgBilling6Months: Number(e.target.value) }
                         })}
                         className="w-full bg-white border border-indigo-100 rounded-xl py-2 px-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono"
                       />
@@ -1656,8 +1662,8 @@ function MainApp() {
                       <TrendingUp className="w-4 h-4" />
                       <span className="text-[10px] font-bold uppercase tracking-widest">Total Devengado</span>
                     </div>
-                    <div className="text-2xl font-black text-slate-800 font-mono">{formatCurrency(results.gross)}</div>
-                    <div className="mt-2 text-[10px] text-slate-400 font-medium">Ingreso Bruto acumulado</div>
+                    <div className="text-2xl font-black text-slate-800 font-mono">{formatCurrency(results.totalGross)}</div>
+                    <div className="mt-2 text-[10px] text-slate-400 font-medium">Incluye proporcionales de Prima y Vacaciones</div>
                   </motion.div>
 
                   <motion.div 
@@ -1722,6 +1728,14 @@ function MainApp() {
                                 <span className="text-sm text-slate-600">Total por Pacientes</span>
                                 <span className="font-bold font-mono">{formatCurrency(results.totalP)}</span>
                               </div>
+                              <div className="flex justify-between items-center p-3 bg-indigo-50 rounded-xl border border-indigo-100">
+                                <span className="text-sm text-indigo-700 font-bold">Prima Proporcional</span>
+                                <span className="font-bold font-mono text-indigo-700">+{formatCurrency(results.primaProporcional)}</span>
+                              </div>
+                              <div className="flex justify-between items-center p-3 bg-emerald-50 rounded-xl border border-emerald-100">
+                                <span className="text-sm text-emerald-700 font-bold">Vacaciones Proporcionales</span>
+                                <span className="font-bold font-mono text-emerald-700">+{formatCurrency(results.vacacionesProporcional)}</span>
+                              </div>
                             </div>
                           </div>
 
@@ -1770,27 +1784,27 @@ function MainApp() {
                               </table>
                               
                               <div className="space-y-4 mt-6 pt-6 border-t border-slate-100">
-                                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">✨ Beneficios y Provisiones</h4>
+                                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">✨ Beneficios Proporcionales</h4>
                                 <div className="space-y-3">
                                   <div className="flex justify-between items-center p-3 bg-indigo-50 rounded-xl border border-indigo-100">
                                     <div className="flex items-center gap-2">
                                       <div>
-                                        <span className="text-sm text-indigo-700 font-bold">Prima No Constitutiva</span>
-                                        <p className="text-[10px] text-indigo-500">Calculada sobre acumulado promedio</p>
+                                        <span className="text-sm text-indigo-700 font-bold">Prima Proporcional</span>
+                                        <p className="text-[10px] text-indigo-500">Basada en promedio de 6 meses</p>
                                       </div>
-                                      <span title="Pago extra que no constituye salario para aportes pero sí para Retefuente."><Info className="w-3.5 h-3.5 text-indigo-400" /></span>
+                                      <span title="Medio sueldo proporcional calculado sobre el promedio de lo facturado en los últimos 6 meses."><Info className="w-3.5 h-3.5 text-indigo-400" /></span>
                                     </div>
-                                    <span className="font-bold font-mono text-indigo-700">+{formatCurrency(results.primaNoConstitutiva)}</span>
+                                    <span className="font-bold font-mono text-indigo-700">+{formatCurrency(results.primaProporcional)}</span>
                                   </div>
                                   <div className="flex justify-between items-center p-3 bg-emerald-50 rounded-xl border border-emerald-100">
                                     <div className="flex items-center gap-2">
                                       <div>
-                                        <span className="text-sm text-emerald-700 font-bold">Provisión Vacaciones</span>
-                                        <p className="text-[10px] text-emerald-500">Informativo (4.17%)</p>
+                                        <span className="text-sm text-emerald-700 font-bold">Vacaciones Proporcionales</span>
+                                        <p className="text-[10px] text-emerald-500">Basadas en promedio de 12 meses</p>
                                       </div>
-                                      <span title="Monto que el empleador reserva mensualmente para tus vacaciones (15 días por año)."><Info className="w-3.5 h-3.5 text-emerald-400" /></span>
+                                      <span title="Proporcional de vacaciones (15 días por año) calculado sobre el promedio de lo facturado en los últimos 12 meses."><Info className="w-3.5 h-3.5 text-emerald-400" /></span>
                                     </div>
-                                    <span className="font-bold font-mono text-emerald-700">{formatCurrency(results.vacationProvision)}</span>
+                                    <span className="font-bold font-mono text-emerald-700">+{formatCurrency(results.vacacionesProporcional)}</span>
                                   </div>
                                 </div>
                               </div>
