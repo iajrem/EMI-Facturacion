@@ -1,4 +1,4 @@
-const CACHE_NAME = 'emipagos-v1';
+const CACHE_NAME = 'emipagos-v2';
 const ASSETS = [
   '/',
   '/index.html',

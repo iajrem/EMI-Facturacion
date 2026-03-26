@@ -155,6 +155,7 @@ interface Rates {
     interesesVivienda: number; // Max 100 UVT
     avgBilling12Months: number; // For Vacations proportional
     avgBilling6Months: number;  // For Prima proportional
+    billingCutoffDay: number;   // Day of the month for billing cutoff
   };
 }
 
@@ -231,8 +232,9 @@ const DEFAULT_RATES: Rates = {
     prepagada: 0,
     pensionVoluntaria: 0,
     interesesVivienda: 0,
-    avgBilling12Months: 0,
     avgBilling6Months: 0,
+    avgBilling12Months: 0,
+    billingCutoffDay: 29,
   }
 };
 
@@ -365,6 +367,8 @@ function MainApp() {
   const [showDetails, setShowDetails] = useState(false);
   const [savedCalculations, setSavedCalculations] = useState<SavedCalculation[]>([]);
   const [calcName, setCalcName] = useState('');
+  const [autoCalculatePatients, setAutoCalculatePatients] = useState(true);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   // Load saved calculations from localStorage on mount
   useEffect(() => {
@@ -427,7 +431,7 @@ function MainApp() {
           ...prev,
           hours: shift.isAVAShift ? { day: 0, night: 0, holidayDay: 0, holidayNight: 0 } : h,
           ava: shift.isAVAShift ? h : prev.ava,
-          patients: prev.applyPatients ? h : prev.patients
+          patients: autoCalculatePatients ? h : prev.patients
         };
       });
     };
@@ -438,7 +442,7 @@ function MainApp() {
   // --- Actions ---
   const addRecord = async () => {
     if (!user) return;
-    const recordId = crypto.randomUUID();
+    const recordId = editingId || crypto.randomUUID();
     const newRecord: ShiftRecord = {
       id: recordId,
       userId: user.uid,
@@ -449,25 +453,36 @@ function MainApp() {
       ava: { ...quantities.ava },
       patients: { ...quantities.patients },
       applyPatients: quantities.applyPatients,
-      isDefinitive: false, // Default to projection
+      isDefinitive: editingId ? (records.find(r => r.id === editingId)?.isDefinitive || false) : false,
     };
     
     const path = `users/${user.uid}/records/${recordId}`;
     try {
       await setDoc(doc(db, path), newRecord);
-      // Reset patient and AVA counts for next entry
-      setQuantities(prev => ({
-        ...prev,
+      // Reset form to initial values
+      setEditingId(null);
+      setShift({
+        date: new Date().toISOString().split('T')[0],
+        startTime: '07:00',
+        endTime: '19:00',
+        isHolidayStart: false,
+        isHolidayEnd: false,
+        isAVAShift: false,
+      });
+      setQuantities({
+        hours: { day: 0, night: 0, holidayDay: 0, holidayNight: 0 },
         ava: { day: 0, night: 0, holidayDay: 0, holidayNight: 0 },
-        patients: prev.applyPatients ? (shift.isAVAShift ? { ...prev.ava } : { ...prev.hours }) : { day: 0, night: 0, holidayDay: 0, holidayNight: 0 }
-      }));
+        patients: { day: 0, night: 0, holidayDay: 0, holidayNight: 0 },
+        applyPatients: true,
+      });
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, path);
+      handleFirestoreError(error, editingId ? OperationType.UPDATE : OperationType.CREATE, path);
     }
   };
 
   const removeRecord = async (id: string) => {
     if (!user) return;
+    if (editingId === id) setEditingId(null);
     const path = `users/${user.uid}/records/${id}`;
     try {
       await deleteDoc(doc(db, path));
@@ -489,6 +504,7 @@ function MainApp() {
   };
 
   const editRecord = (record: ShiftRecord) => {
+    setEditingId(record.id);
     setShift(prev => ({ 
       ...prev, 
       date: record.date,
@@ -502,7 +518,6 @@ function MainApp() {
       patients: { ...record.patients },
       applyPatients: record.applyPatients,
     });
-    removeRecord(record.id);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -642,7 +657,57 @@ function MainApp() {
     const hoursBreakdown = { day: 0, night: 0, holidayDay: 0, holidayNight: 0 };
     const patientsBreakdown = { day: 0, night: 0, holidayDay: 0, holidayNight: 0 };
 
-    records.forEach(record => {
+    // Determine current billing cycle
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
+    const cutoff = rates.payroll.billingCutoffDay;
+
+    // If editing, replace the record in the list with the current form values
+    let recordsToCalculate = [...records];
+    if (editingId) {
+      const currentFormRecord: ShiftRecord = {
+        id: editingId,
+        userId: user?.uid || '',
+        date: shift.date,
+        startTime: shift.startTime,
+        endTime: shift.endTime,
+        hours: { ...quantities.hours },
+        ava: { ...quantities.ava },
+        patients: { ...quantities.patients },
+        applyPatients: quantities.applyPatients,
+        isDefinitive: records.find(r => r.id === editingId)?.isDefinitive || false,
+      };
+      recordsToCalculate = recordsToCalculate.map(r => r.id === editingId ? currentFormRecord : r);
+    }
+
+    const filteredRecords = recordsToCalculate.filter(record => {
+      const recordDate = new Date(record.date + 'T00:00:00');
+      const rYear = recordDate.getFullYear();
+      const rMonth = recordDate.getMonth();
+      const rDay = recordDate.getDate();
+
+      // Logic: A record belongs to the "current" cycle if it's after the previous cutoff
+      // and before or on the current cutoff.
+      // For simplicity, let's just filter for the cycle that includes "today"
+      
+      let cycleStart: Date;
+      let cycleEnd: Date;
+
+      if (now.getDate() > cutoff) {
+        // We are in the cycle that started after this month's cutoff
+        cycleStart = new Date(currentYear, currentMonth, cutoff + 1);
+        cycleEnd = new Date(currentYear, currentMonth + 1, cutoff);
+      } else {
+        // We are in the cycle that ends with this month's cutoff
+        cycleStart = new Date(currentYear, currentMonth - 1, cutoff + 1);
+        cycleEnd = new Date(currentYear, currentMonth, cutoff);
+      }
+
+      return recordDate >= cycleStart && recordDate <= cycleEnd;
+    });
+
+    filteredRecords.forEach(record => {
       // Hours
       hoursBreakdown.day += record.hours.day;
       hoursBreakdown.night += record.hours.night;
@@ -771,7 +836,7 @@ function MainApp() {
       totalMonthlyHours,
       totalMonthlyPatients
     };
-  }, [records, rates, additionalDeductions]);
+  }, [records, rates, additionalDeductions, editingId, shift, quantities]);
 
   if (!isAuthReady) {
     return (
@@ -793,7 +858,7 @@ function MainApp() {
             <Calculator className="w-10 h-10" />
           </div>
           <div className="space-y-2">
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight">Calculadora Médica</h1>
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight">EMI pagos</h1>
             <p className="text-slate-500 text-sm">Gestiona tus turnos y extractos de forma segura en la nube.</p>
           </div>
           <div className="space-y-4">
@@ -851,7 +916,7 @@ function MainApp() {
             <Stethoscope className="text-white w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-800">Bitácora y Calculadora Médica</h1>
+            <h1 className="text-xl font-bold tracking-tight text-slate-800">EMI pagos</h1>
             <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">Colombia 2026 • Jornada Legal</p>
           </div>
         </div>
@@ -1064,7 +1129,7 @@ function MainApp() {
                 </div>
 
                 <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Parámetros de Nómina (Indefinido)</h3>
+                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Parámetros de Extracto de Pagos (Indefinido)</h3>
                   <div className="space-y-4">
                     <div>
                       <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
@@ -1079,6 +1144,26 @@ function MainApp() {
                           payroll: { ...rates.payroll, uvtValue: Number(e.target.value) }
                         })}
                         className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-xl">
+                      <div className="flex flex-col">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1">
+                          Día de Corte de Facturación
+                          <span title="Día del mes en que se cierra el periodo de pago (ej: el 20 de cada mes)"><Info className="w-3 h-3 text-slate-400" /></span>
+                        </label>
+                        <span className="text-[10px] text-slate-400">Reinicia el periodo mensual</span>
+                      </div>
+                      <input 
+                        type="number"
+                        min="1"
+                        max="31"
+                        value={rates.payroll.billingCutoffDay}
+                        onChange={(e) => setRates({
+                          ...rates,
+                          payroll: { ...rates.payroll, billingCutoffDay: Number(e.target.value) }
+                        })}
+                        className="w-16 bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-xs text-right focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono"
                       />
                     </div>
                     <div className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-xl">
@@ -1381,29 +1466,40 @@ function MainApp() {
                 </div>
 
                 {/* Patients Adjustment */}
-                <div className="space-y-4">
+                <div className="flex flex-col gap-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 text-indigo-600">
                       <Users className="w-4 h-4" />
                       <h3 className="text-sm font-bold">Pacientes Atendidos</h3>
                     </div>
-                    <label className={`flex items-center gap-2 ${shift.isAVAShift ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
-                      <input 
-                        type="checkbox" 
-                        checked={quantities.applyPatients}
-                        disabled={shift.isAVAShift}
-                        onChange={(e) => {
-                          const checked = e.target.checked;
-                          setQuantities(prev => ({ 
-                            ...prev, 
-                            applyPatients: checked,
-                            patients: checked ? (shift.isAVAShift ? { ...prev.ava } : { ...prev.hours }) : prev.patients
-                          }));
-                        }}
-                        className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <span className="text-xs text-slate-600">Aplica cobro</span>
-                    </label>
+                    <div className="flex items-center gap-4">
+                      <label className={`flex items-center gap-2 cursor-pointer`}>
+                        <input 
+                          type="checkbox" 
+                          checked={autoCalculatePatients}
+                          onChange={(e) => setAutoCalculatePatients(e.target.checked)}
+                          className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span className="text-[10px] font-bold text-slate-500 uppercase">Auto-calcular</span>
+                      </label>
+                      <label className={`flex items-center gap-2 ${shift.isAVAShift ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
+                        <input 
+                          type="checkbox" 
+                          checked={quantities.applyPatients}
+                          disabled={shift.isAVAShift}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setQuantities(prev => ({ 
+                              ...prev, 
+                              applyPatients: checked,
+                              patients: (checked && autoCalculatePatients) ? (shift.isAVAShift ? { ...prev.ava } : { ...prev.hours }) : prev.patients
+                            }));
+                          }}
+                          className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span className="text-xs text-slate-600">Aplica cobro</span>
+                      </label>
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     {[
@@ -1418,10 +1514,13 @@ function MainApp() {
                           type="number"
                           disabled={!quantities.applyPatients}
                           value={quantities.patients[item.key as keyof Quantities['patients']]}
-                          onChange={(e) => setQuantities({
-                            ...quantities,
-                            patients: { ...quantities.patients, [item.key]: Number(e.target.value) }
-                          })}
+                          onChange={(e) => {
+                            setAutoCalculatePatients(false);
+                            setQuantities({
+                              ...quantities,
+                              patients: { ...quantities.patients, [item.key]: Number(e.target.value) }
+                            });
+                          }}
                           className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono disabled:opacity-50"
                         />
                       </div>
@@ -1430,13 +1529,39 @@ function MainApp() {
                 </div>
               </div>
 
-              <button 
-                onClick={addRecord}
-                className="w-full bg-indigo-600 text-white font-bold py-4 rounded-2xl shadow-lg shadow-indigo-200 hover:bg-indigo-700 transition-all flex items-center justify-center gap-2"
-              >
-                <Calculator className="w-5 h-5" />
-                Agregar a la Bitácora
-              </button>
+              <div className="flex flex-col sm:flex-row gap-4">
+                {editingId && (
+                  <button 
+                    onClick={() => {
+                      setEditingId(null);
+                      setShift({
+                        date: new Date().toISOString().split('T')[0],
+                        startTime: '07:00',
+                        endTime: '19:00',
+                        isHolidayStart: false,
+                        isHolidayEnd: false,
+                        isAVAShift: false,
+                      });
+                      setQuantities({
+                        hours: { day: 0, night: 0, holidayDay: 0, holidayNight: 0 },
+                        ava: { day: 0, night: 0, holidayDay: 0, holidayNight: 0 },
+                        patients: { day: 0, night: 0, holidayDay: 0, holidayNight: 0 },
+                        applyPatients: true,
+                      });
+                    }}
+                    className="flex-1 bg-slate-200 text-slate-700 font-bold py-4 rounded-2xl hover:bg-slate-300 transition-all"
+                  >
+                    Cancelar Edición
+                  </button>
+                )}
+                <button 
+                  onClick={addRecord}
+                  className={`flex-[2] ${editingId ? 'bg-amber-500 hover:bg-amber-600' : 'bg-indigo-600 hover:bg-indigo-700'} text-white font-bold py-4 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2`}
+                >
+                  <Calculator className="w-5 h-5" />
+                  {editingId ? 'Actualizar Registro' : 'Agregar a la Bitácora'}
+                </button>
+              </div>
             </div>
           </section>
 
@@ -1877,7 +2002,7 @@ function MainApp() {
       <footer className="bg-slate-900 text-slate-400 p-10 text-center space-y-4">
         <div className="flex items-center justify-center gap-2 text-white">
           <Stethoscope className="w-5 h-5" />
-          <span className="font-bold tracking-tight">Calculadora Médica Laboral</span>
+          <span className="font-bold tracking-tight">EMI pagos</span>
         </div>
         <p className="text-xs max-w-md mx-auto leading-relaxed">
           Herramienta diseñada para profesionales de la salud en Colombia. 

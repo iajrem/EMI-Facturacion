@@ -1,7 +1,7 @@
 {
   "name": "EMI pagos",
   "short_name": "EMI pagos",
-  "description": "Calculadora de nómina médica para contratos EMI en Colombia.",
+  "description": "Calculadora de extracto de pagos médica para contratos EMI en Colombia.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
