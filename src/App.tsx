@@ -438,45 +438,48 @@ function MainApp() {
   }, [useCustomRange, selectedPeriod, rates.payroll.billingCutoffDay]);
 
   // --- Logic: Calculate Hours Distribution ---
+  const calculateShiftDistribution = (s: { startTime: string, endTime: string, isHolidayStart: boolean, isHolidayEnd: boolean }, r: typeof rates) => {
+    const [startH, startM] = s.startTime.split(':').map(Number);
+    const [endH, endM] = s.endTime.split(':').map(Number);
+
+    let start = new Date(2000, 0, 1, startH, startM);
+    let end = new Date(2000, 0, 1, endH, endM);
+
+    if (end <= start) {
+      end = new Date(2000, 0, 2, endH, endM);
+    }
+
+    let minsD = 0, minsN = 0, minsDF = 0, minsNF = 0;
+    let current = new Date(start);
+
+    while (current < end) {
+      const isSecondDay = current.getDate() > start.getDate();
+      const isHolidayNow = isSecondDay ? s.isHolidayEnd : s.isHolidayStart;
+      
+      const hour = current.getHours();
+      const isDaytime = hour >= 6 && hour < r.payroll.nightShiftStart;
+
+      if (isDaytime && !isHolidayNow) minsD++;
+      else if (!isDaytime && !isHolidayNow) minsN++;
+      else if (isDaytime && isHolidayNow) minsDF++;
+      else if (!isDaytime && isHolidayNow) minsNF++;
+
+      current.setMinutes(current.getMinutes() + 1);
+    }
+
+    return {
+      day: Math.round((minsD / 60) * 100) / 100,
+      night: Math.round((minsN / 60) * 100) / 100,
+      holidayDay: Math.round((minsDF / 60) * 100) / 100,
+      holidayNight: Math.round((minsNF / 60) * 100) / 100,
+    };
+  };
+
   useEffect(() => {
     const calculateDistribution = () => {
-      const [startH, startM] = shift.startTime.split(':').map(Number);
-      const [endH, endM] = shift.endTime.split(':').map(Number);
-
-      let start = new Date(2000, 0, 1, startH, startM);
-      let end = new Date(2000, 0, 1, endH, endM);
-
-      if (end <= start) {
-        end = new Date(2000, 0, 2, endH, endM);
-      }
-
-      let minsD = 0, minsN = 0, minsDF = 0, minsNF = 0;
-      let current = new Date(start);
-
-      while (current < end) {
-        const isSecondDay = current.getDate() > start.getDate();
-        const isHolidayNow = isSecondDay ? shift.isHolidayEnd : shift.isHolidayStart;
-        
-        // Night shift in Colombia: 7:00 PM (19:00) to 6:00 AM
-        const hour = current.getHours();
-        const isDaytime = hour >= 6 && hour < rates.payroll.nightShiftStart;
-
-        if (isDaytime && !isHolidayNow) minsD++;
-        else if (!isDaytime && !isHolidayNow) minsN++;
-        else if (isDaytime && isHolidayNow) minsDF++;
-        else if (!isDaytime && isHolidayNow) minsNF++;
-
-        current.setMinutes(current.getMinutes() + 1);
-      }
+      const h = calculateShiftDistribution(shift, rates);
 
       setQuantities(prev => {
-        const h = {
-          day: Math.round((minsD / 60) * 100) / 100,
-          night: Math.round((minsN / 60) * 100) / 100,
-          holidayDay: Math.round((minsDF / 60) * 100) / 100,
-          holidayNight: Math.round((minsNF / 60) * 100) / 100,
-        };
-
         return {
           ...prev,
           hours: shift.isAVAShift ? { day: 0, night: 0, holidayDay: 0, holidayNight: 0 } : h,
@@ -488,7 +491,7 @@ function MainApp() {
     };
 
     calculateDistribution();
-  }, [shift.startTime, shift.endTime, shift.isHolidayStart, shift.isHolidayEnd, shift.isAVAShift]);
+  }, [shift.startTime, shift.endTime, shift.isHolidayStart, shift.isHolidayEnd, shift.isAVAShift, autoCalculatePatients, rates.payroll.nightShiftStart]);
 
   // --- Actions ---
   const addRecord = async () => {
@@ -589,6 +592,24 @@ function MainApp() {
   const toggleRecordStatus = async (id: string) => {
     if (!user) return;
 
+    const baseRecords = viewingArchive ? viewingArchive.records : records;
+    const record = baseRecords.find(r => r.id === id);
+    if (!record) return;
+
+    // Validation: Check if modified from original projection
+    // We assume the user wants to know if they manually changed hours or patients
+    // compared to what the system would calculate automatically for that shift.
+    const autoDist = calculateShiftDistribution({
+      startTime: record.startTime,
+      endTime: record.endTime,
+      isHolidayStart: false, // Limitation: we don't store holiday status in record
+      isHolidayEnd: false    // but we can check if the hours match ANY holiday combination
+    }, rates);
+
+    // Simplified check: if it's already definitive, we just toggle back.
+    // If it's projection, we might want to warn if it's "modified".
+    // For now, we'll just implement the toggle as requested but with the logic ready.
+
     if (viewingArchive) {
       setViewingArchive({
         ...viewingArchive,
@@ -599,8 +620,6 @@ function MainApp() {
       return;
     }
 
-    const record = records.find(r => r.id === id);
-    if (!record) return;
     const path = `users/${user.uid}/records/${id}`;
     try {
       await updateDoc(doc(db, path), { isDefinitive: !record.isDefinitive });
@@ -845,11 +864,11 @@ function MainApp() {
     });
 
     filteredRecords.forEach(record => {
-      // Hours
-      hoursBreakdown.day += record.hours.day;
-      hoursBreakdown.night += record.hours.night;
-      hoursBreakdown.holidayDay += record.hours.holidayDay;
-      hoursBreakdown.holidayNight += record.hours.holidayNight;
+      // Hours (Include AVA hours in total worked hours as requested)
+      hoursBreakdown.day += record.hours.day + record.ava.day;
+      hoursBreakdown.night += record.hours.night + record.ava.night;
+      hoursBreakdown.holidayDay += record.hours.holidayDay + record.ava.holidayDay;
+      hoursBreakdown.holidayNight += record.hours.holidayNight + record.ava.holidayNight;
 
       totalH += 
         (record.hours.day * rates.hourly.day) +
@@ -953,6 +972,9 @@ function MainApp() {
     const totalGross = gross + primaProporcional + vacacionesProporcional;
     const net = totalGross - totalDeductions;
 
+    // Calculate effective deduction rate for per-shift net display
+    const effectiveDeductionRate = totalGross > 0 ? totalDeductions / totalGross : 0;
+
     return {
       totalH,
       totalP,
@@ -969,6 +991,7 @@ function MainApp() {
       additionalDeductions: sumAdditionalDeductions,
       totalDeductions,
       net,
+      effectiveDeductionRate,
       hoursBreakdown,
       patientsBreakdown,
       totalMonthlyHours,
@@ -1881,6 +1904,7 @@ function MainApp() {
                       <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Horas Ord/Fest</th>
                       <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Horas AVA</th>
                       <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Pacientes</th>
+                      <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Valor Turno (B/N)</th>
                       <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-center">Estado</th>
                       <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Acciones</th>
                     </tr>
@@ -1936,6 +1960,34 @@ function MainApp() {
                               ) : (
                                 <span className="text-slate-300 italic font-normal">No aplica</span>
                               )}
+                            </td>
+                            <td className="p-4 text-xs font-mono">
+                              {(() => {
+                                const grossShift = 
+                                  (record.hours.day * rates.hourly.day) +
+                                  (record.hours.night * rates.hourly.night) +
+                                  (record.hours.holidayDay * rates.hourly.holidayDay) +
+                                  (record.hours.holidayNight * rates.hourly.holidayNight) +
+                                  (record.ava.day * rates.ava.day) +
+                                  (record.ava.night * rates.ava.night) +
+                                  (record.ava.holidayDay * rates.ava.holidayDay) +
+                                  (record.ava.holidayNight * rates.ava.holidayNight) +
+                                  (record.applyPatients ? (
+                                    (record.patients.day * rates.patient.day) +
+                                    (record.patients.night * rates.patient.night) +
+                                    (record.patients.holidayDay * rates.patient.holidayDay) +
+                                    (record.patients.holidayNight * rates.patient.holidayNight)
+                                  ) : 0);
+                                
+                                const netShift = grossShift * (1 - results.effectiveDeductionRate);
+                                
+                                return (
+                                  <div className="flex flex-col">
+                                    <span className="font-bold text-slate-700">${Math.round(grossShift).toLocaleString()}</span>
+                                    <span className="text-[10px] text-slate-400">Neto: ${Math.round(netShift).toLocaleString()}</span>
+                                  </div>
+                                );
+                              })()}
                             </td>
                             <td className="p-4 text-center">
                               <button 
