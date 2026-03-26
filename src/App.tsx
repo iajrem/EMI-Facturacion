@@ -798,7 +798,11 @@ function MainApp() {
     let totalAVA = 0;
 
     const hoursBreakdown = { day: 0, night: 0, holidayDay: 0, holidayNight: 0 };
+    const hoursValues = { day: 0, night: 0, holidayDay: 0, holidayNight: 0 };
+    const avaBreakdown = { day: 0, night: 0, holidayDay: 0, holidayNight: 0 };
+    const avaValues = { day: 0, night: 0, holidayDay: 0, holidayNight: 0 };
     const patientsBreakdown = { day: 0, night: 0, holidayDay: 0, holidayNight: 0 };
+    const patientsValues = { day: 0, night: 0, holidayDay: 0, holidayNight: 0 };
 
     // Determine target billing cycle from selectedPeriod
     const targetMonth = selectedPeriod.month;
@@ -864,11 +868,27 @@ function MainApp() {
     });
 
     filteredRecords.forEach(record => {
-      // Hours (Include AVA hours in total worked hours as requested)
-      hoursBreakdown.day += record.hours.day + record.ava.day;
-      hoursBreakdown.night += record.hours.night + record.ava.night;
-      hoursBreakdown.holidayDay += record.hours.holidayDay + record.ava.holidayDay;
-      hoursBreakdown.holidayNight += record.hours.holidayNight + record.ava.holidayNight;
+      // Regular Hours (Carrito)
+      hoursBreakdown.day += record.hours.day;
+      hoursBreakdown.night += record.hours.night;
+      hoursBreakdown.holidayDay += record.hours.holidayDay;
+      hoursBreakdown.holidayNight += record.hours.holidayNight;
+
+      hoursValues.day += record.hours.day * rates.hourly.day;
+      hoursValues.night += record.hours.night * rates.hourly.night;
+      hoursValues.holidayDay += record.hours.holidayDay * rates.hourly.holidayDay;
+      hoursValues.holidayNight += record.hours.holidayNight * rates.hourly.holidayNight;
+
+      // AVA Hours
+      avaBreakdown.day += record.ava.day;
+      avaBreakdown.night += record.ava.night;
+      avaBreakdown.holidayDay += record.ava.holidayDay;
+      avaBreakdown.holidayNight += record.ava.holidayNight;
+
+      avaValues.day += record.ava.day * rates.ava.day;
+      avaValues.night += record.ava.night * rates.ava.night;
+      avaValues.holidayDay += record.ava.holidayDay * rates.ava.holidayDay;
+      avaValues.holidayNight += record.ava.holidayNight * rates.ava.holidayNight;
 
       totalH += 
         (record.hours.day * rates.hourly.day) +
@@ -888,6 +908,11 @@ function MainApp() {
         patientsBreakdown.holidayDay += record.patients.holidayDay;
         patientsBreakdown.holidayNight += record.patients.holidayNight;
 
+        patientsValues.day += record.patients.day * rates.patient.day;
+        patientsValues.night += record.patients.night * rates.patient.night;
+        patientsValues.holidayDay += record.patients.holidayDay * rates.patient.holidayDay;
+        patientsValues.holidayNight += record.patients.holidayNight * rates.patient.holidayNight;
+
         totalP += 
           (record.patients.day * rates.patient.day) +
           (record.patients.night * rates.patient.night) +
@@ -897,6 +922,7 @@ function MainApp() {
     });
 
     const totalMonthlyHours = hoursBreakdown.day + hoursBreakdown.night + hoursBreakdown.holidayDay + hoursBreakdown.holidayNight;
+    const totalMonthlyAVA = avaBreakdown.day + avaBreakdown.night + avaBreakdown.holidayDay + avaBreakdown.holidayNight;
     const totalMonthlyPatients = patientsBreakdown.day + patientsBreakdown.night + patientsBreakdown.holidayDay + patientsBreakdown.holidayNight;
 
     const gross = totalH + totalP + totalAVA;
@@ -993,8 +1019,13 @@ function MainApp() {
       net,
       effectiveDeductionRate,
       hoursBreakdown,
+      hoursValues,
+      avaBreakdown,
+      avaValues,
       patientsBreakdown,
+      patientsValues,
       totalMonthlyHours,
+      totalMonthlyAVA,
       totalMonthlyPatients
     };
   }, [records, rates, additionalDeductions, viewingArchive, shift, quantities, editingId, user, selectedPeriod, useCustomRange, customRange]);
@@ -2036,14 +2067,20 @@ function MainApp() {
                   {(viewingArchive ? viewingArchive.records : records).length > 0 && (
                     <tfoot className="bg-slate-50 border-t-2 border-slate-200">
                       <tr>
-                        <td colSpan={5} className="p-4 text-right text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                        <td colSpan={2} className="p-4 text-right text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                           Totales del Periodo:
+                        </td>
+                        <td className="p-4 text-xs font-mono font-black text-indigo-600">
+                          {results.totalMonthlyHours}h
+                        </td>
+                        <td className="p-4 text-xs font-mono font-black text-violet-600">
+                          {results.totalMonthlyAVA}h
                         </td>
                         <td className="p-4 text-xs font-mono font-black text-emerald-600">
                           {results.totalMonthlyPatients} Pac.
                         </td>
-                        <td className="p-4 text-xs font-mono font-black text-indigo-600">
-                          ${Math.round(results.gross).toLocaleString()}
+                        <td className="p-4 text-xs font-mono font-black text-slate-800">
+                          {formatCurrency(results.gross)}
                         </td>
                         <td colSpan={2}></td>
                       </tr>
@@ -2102,7 +2139,8 @@ function MainApp() {
             {(viewingArchive ? viewingArchive.records : records).length > 0 ? (
               <>
                 {/* Reporte de Cantidades */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  {/* Horas Carrito */}
                   <motion.div 
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -2110,36 +2148,72 @@ function MainApp() {
                   >
                     <div className="flex items-center gap-2 text-indigo-600 mb-4">
                       <Clock className="w-4 h-4" />
-                      <h3 className="text-xs font-bold uppercase tracking-widest">Reporte de Horas Mensuales</h3>
+                      <h3 className="text-xs font-bold uppercase tracking-widest">Reporte Horas Carrito</h3>
                     </div>
                     <div className="space-y-3">
                       <div className="flex justify-between items-center text-sm">
-                        <span className="text-slate-500">Horas Diurnas</span>
-                        <span className="font-bold text-slate-700">{results.hoursBreakdown.day}h</span>
+                        <span className="text-slate-500">Diurnas ({results.hoursBreakdown.day}h)</span>
+                        <span className="font-bold text-slate-700">{formatCurrency(results.hoursValues.day)}</span>
                       </div>
                       <div className="flex justify-between items-center text-sm">
-                        <span className="text-slate-500">Horas Nocturnas</span>
-                        <span className="font-bold text-slate-700">{results.hoursBreakdown.night}h</span>
+                        <span className="text-slate-500">Nocturnas ({results.hoursBreakdown.night}h)</span>
+                        <span className="font-bold text-slate-700">{formatCurrency(results.hoursValues.night)}</span>
                       </div>
                       <div className="flex justify-between items-center text-sm">
-                        <span className="text-slate-500">Horas Festivas Diurnas</span>
-                        <span className="font-bold text-slate-700">{results.hoursBreakdown.holidayDay}h</span>
+                        <span className="text-slate-500">Fest. Diurnas ({results.hoursBreakdown.holidayDay}h)</span>
+                        <span className="font-bold text-slate-700">{formatCurrency(results.hoursValues.holidayDay)}</span>
                       </div>
                       <div className="flex justify-between items-center text-sm">
-                        <span className="text-slate-500">Horas Festivas Nocturnas</span>
-                        <span className="font-bold text-slate-700">{results.hoursBreakdown.holidayNight}h</span>
+                        <span className="text-slate-500">Fest. Noct. ({results.hoursBreakdown.holidayNight}h)</span>
+                        <span className="font-bold text-slate-700">{formatCurrency(results.hoursValues.holidayNight)}</span>
                       </div>
                       <div className="pt-3 border-t border-slate-100 flex justify-between items-center">
-                        <span className="text-xs font-bold text-slate-400 uppercase">Total Horas</span>
-                        <span className="text-lg font-black text-indigo-600 font-mono">{results.totalMonthlyHours}h</span>
+                        <span className="text-xs font-bold text-slate-400 uppercase">Total Carrito</span>
+                        <span className="text-lg font-black text-indigo-600 font-mono">{formatCurrency(results.totalH)}</span>
                       </div>
                     </div>
                   </motion.div>
 
+                  {/* Horas AVA */}
                   <motion.div 
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.1 }}
+                    className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm"
+                  >
+                    <div className="flex items-center gap-2 text-violet-600 mb-4">
+                      <Clock className="w-4 h-4" />
+                      <h3 className="text-xs font-bold uppercase tracking-widest">Reporte Horas AVA</h3>
+                    </div>
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="text-slate-500">Diurnas ({results.avaBreakdown.day}h)</span>
+                        <span className="font-bold text-slate-700">{formatCurrency(results.avaValues.day)}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="text-slate-500">Nocturnas ({results.avaBreakdown.night}h)</span>
+                        <span className="font-bold text-slate-700">{formatCurrency(results.avaValues.night)}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="text-slate-500">Fest. Diurnas ({results.avaBreakdown.holidayDay}h)</span>
+                        <span className="font-bold text-slate-700">{formatCurrency(results.avaValues.holidayDay)}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="text-slate-500">Fest. Noct. ({results.avaBreakdown.holidayNight}h)</span>
+                        <span className="font-bold text-slate-700">{formatCurrency(results.avaValues.holidayNight)}</span>
+                      </div>
+                      <div className="pt-3 border-t border-slate-100 flex justify-between items-center">
+                        <span className="text-xs font-bold text-slate-400 uppercase">Total AVA</span>
+                        <span className="text-lg font-black text-violet-600 font-mono">{formatCurrency(results.totalAVA)}</span>
+                      </div>
+                    </div>
+                  </motion.div>
+
+                  {/* Reporte de Pacientes */}
+                  <motion.div 
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.2 }}
                     className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm"
                   >
                     <div className="flex items-center gap-2 text-emerald-600 mb-4">
@@ -2148,24 +2222,24 @@ function MainApp() {
                     </div>
                     <div className="space-y-3">
                       <div className="flex justify-between items-center text-sm">
-                        <span className="text-slate-500">Pacientes Diurnos</span>
-                        <span className="font-bold text-slate-700">{results.patientsBreakdown.day}</span>
+                        <span className="text-slate-500">Diurnos ({results.patientsBreakdown.day})</span>
+                        <span className="font-bold text-slate-700">{formatCurrency(results.patientsValues.day)}</span>
                       </div>
                       <div className="flex justify-between items-center text-sm">
-                        <span className="text-slate-500">Pacientes Nocturnos</span>
-                        <span className="font-bold text-slate-700">{results.patientsBreakdown.night}</span>
+                        <span className="text-slate-500">Nocturnos ({results.patientsBreakdown.night})</span>
+                        <span className="font-bold text-slate-700">{formatCurrency(results.patientsValues.night)}</span>
                       </div>
                       <div className="flex justify-between items-center text-sm">
-                        <span className="text-slate-500">Pacientes Festivos Diurnos</span>
-                        <span className="font-bold text-slate-700">{results.patientsBreakdown.holidayDay}</span>
+                        <span className="text-slate-500">Fest. Diurnos ({results.patientsBreakdown.holidayDay})</span>
+                        <span className="font-bold text-slate-700">{formatCurrency(results.patientsValues.holidayDay)}</span>
                       </div>
                       <div className="flex justify-between items-center text-sm">
-                        <span className="text-slate-500">Pacientes Festivos Nocturnos</span>
-                        <span className="font-bold text-slate-700">{results.patientsBreakdown.holidayNight}</span>
+                        <span className="text-slate-500">Fest. Noct. ({results.patientsBreakdown.holidayNight})</span>
+                        <span className="font-bold text-slate-700">{formatCurrency(results.patientsValues.holidayNight)}</span>
                       </div>
                       <div className="pt-3 border-t border-slate-100 flex justify-between items-center">
                         <span className="text-xs font-bold text-slate-400 uppercase">Total Pacientes</span>
-                        <span className="text-lg font-black text-emerald-600 font-mono">{results.totalMonthlyPatients}</span>
+                        <span className="text-lg font-black text-emerald-600 font-mono">{formatCurrency(results.totalP)}</span>
                       </div>
                     </div>
                   </motion.div>
