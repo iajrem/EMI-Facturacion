@@ -24,6 +24,7 @@ import {
   Save,
   FolderOpen,
   FileText,
+  FilePlus,
   Plus,
   X,
   Calendar,
@@ -809,7 +810,8 @@ function MainApp() {
     }
 
     const filteredRecords = viewingArchive ? recordsToCalculate : recordsToCalculate.filter(record => {
-      if (useCustomRange && customRange.start && customRange.end) {
+      if (useCustomRange) {
+        if (!customRange.start || !customRange.end) return true; // If range is incomplete, show all (or maybe none? let's show all for now)
         return record.date >= customRange.start && record.date <= customRange.end;
       }
 
@@ -1496,14 +1498,100 @@ function MainApp() {
 
         {/* Main Content */}
         <main className="flex-1 p-6 lg:p-10 space-y-10 max-w-5xl mx-auto">
-          {/* Step 2: Register Shift */}
+          {/* Step 2: Period and Register Shift */}
           <section className="space-y-6">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-full bg-slate-800 text-white flex items-center justify-center font-bold text-sm">2</div>
-              <h2 className="text-xl font-bold text-slate-800">Registrar un Nuevo Turno</h2>
+              <h2 className="text-xl font-bold text-slate-800">Periodo y Registro de Turnos</h2>
             </div>
+
+            {/* Period Selection */}
+            {!viewingArchive && (
+              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center gap-2 text-indigo-600 mb-2">
+                  <Calendar className="w-5 h-5" />
+                  <h3 className="text-sm font-bold uppercase tracking-wider">Definir Periodo de Liquidación</h3>
+                </div>
+                
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+                  <div className="flex bg-slate-100 p-1 rounded-xl w-full sm:w-auto">
+                    <button
+                      onClick={() => setUseCustomRange(false)}
+                      className={`flex-1 sm:flex-none px-4 py-2 text-[10px] font-bold uppercase tracking-wider rounded-lg transition-all ${!useCustomRange ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                      Ciclo Mensual
+                    </button>
+                    <button
+                      onClick={() => setUseCustomRange(true)}
+                      className={`flex-1 sm:flex-none px-4 py-2 text-[10px] font-bold uppercase tracking-wider rounded-lg transition-all ${useCustomRange ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                      Rango Libre
+                    </button>
+                  </div>
+
+                  {useCustomRange ? (
+                    <div className="flex items-center gap-3 bg-slate-50 p-2 rounded-2xl border border-slate-200 w-full sm:w-auto">
+                      <div className="flex flex-col px-2">
+                        <span className="text-[8px] font-bold text-slate-400 uppercase">Desde</span>
+                        <input
+                          type="date"
+                          value={customRange.start}
+                          onChange={(e) => setCustomRange(prev => ({ ...prev, start: e.target.value }))}
+                          className="bg-transparent text-xs font-bold text-slate-700 outline-none cursor-pointer"
+                        />
+                      </div>
+                      <div className="w-px h-6 bg-slate-200" />
+                      <div className="flex flex-col px-2">
+                        <span className="text-[8px] font-bold text-slate-400 uppercase">Hasta</span>
+                        <input
+                          type="date"
+                          value={customRange.end}
+                          onChange={(e) => setCustomRange(prev => ({ ...prev, end: e.target.value }))}
+                          className="bg-transparent text-xs font-bold text-slate-700 outline-none cursor-pointer"
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-3 bg-slate-50 p-2 rounded-2xl border border-slate-200 w-full sm:w-auto">
+                      <div className="flex flex-col px-2">
+                        <span className="text-[8px] font-bold text-slate-400 uppercase">Mes de Facturación</span>
+                        <select 
+                          value={selectedPeriod.month}
+                          onChange={(e) => setSelectedPeriod(prev => ({ ...prev, month: Number(e.target.value) }))}
+                          className="bg-transparent text-xs font-bold text-slate-700 outline-none cursor-pointer"
+                        >
+                          {['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'].map((m, i) => (
+                            <option key={i} value={i}>{m}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="w-px h-6 bg-slate-200" />
+                      <div className="flex flex-col px-2">
+                        <span className="text-[8px] font-bold text-slate-400 uppercase">Año</span>
+                        <select 
+                          value={selectedPeriod.year}
+                          onChange={(e) => setSelectedPeriod(prev => ({ ...prev, year: Number(e.target.value) }))}
+                          className="bg-transparent text-xs font-bold text-slate-700 outline-none cursor-pointer"
+                        >
+                          {[2024, 2025, 2026, 2027].map(y => (
+                            <option key={y} value={y}>{y}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <p className="text-[10px] text-slate-400 italic">
+                  * Solo los turnos dentro de este periodo se incluirán en el cálculo del extracto final.
+                </p>
+              </div>
+            )}
             
             <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-6">
+              <div className="flex items-center gap-2 text-indigo-600 mb-2">
+                <FilePlus className="w-5 h-5" />
+                <h3 className="text-sm font-bold uppercase tracking-wider">Registrar Turno</h3>
+              </div>
               <div className="flex items-start gap-3 bg-blue-50 p-4 rounded-2xl text-blue-700 text-sm leading-relaxed">
                 <Info className="w-5 h-5 shrink-0 mt-0.5" />
                 <p>Configura los intervalos. Las horas se calcularán automáticamente, pero puedes ajustarlas antes de agregarlas a la bitácora.</p>
@@ -1761,66 +1849,6 @@ function MainApp() {
                   {viewingArchive ? `Extracto: ${viewingArchive.name}` : 'Bitácora de Turnos'}
                 </h2>
               </div>
-
-              {!viewingArchive && (
-                <div className="flex flex-col sm:flex-row items-center gap-3">
-                  <div className="flex bg-slate-100 p-1 rounded-xl">
-                    <button
-                      onClick={() => setUseCustomRange(false)}
-                      className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-lg transition-all ${!useCustomRange ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                    >
-                      Ciclo Mensual
-                    </button>
-                    <button
-                      onClick={() => setUseCustomRange(true)}
-                      className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-lg transition-all ${useCustomRange ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                    >
-                      Rango Personalizado
-                    </button>
-                  </div>
-
-                  {useCustomRange ? (
-                    <div className="flex items-center gap-2 bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm">
-                      <input
-                        type="date"
-                        value={customRange.start}
-                        onChange={(e) => setCustomRange(prev => ({ ...prev, start: e.target.value }))}
-                        className="bg-transparent text-xs font-bold text-slate-700 outline-none cursor-pointer py-1 px-2"
-                      />
-                      <span className="text-slate-400 text-xs">al</span>
-                      <input
-                        type="date"
-                        value={customRange.end}
-                        onChange={(e) => setCustomRange(prev => ({ ...prev, end: e.target.value }))}
-                        className="bg-transparent text-xs font-bold text-slate-700 outline-none cursor-pointer py-1 px-2"
-                      />
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2 bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm">
-                      <Calendar className="w-4 h-4 text-indigo-600 ml-2" />
-                      <select 
-                        value={selectedPeriod.month}
-                        onChange={(e) => setSelectedPeriod(prev => ({ ...prev, month: Number(e.target.value) }))}
-                        className="bg-transparent text-xs font-bold text-slate-700 outline-none cursor-pointer py-1 pr-2"
-                      >
-                        {['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'].map((m, i) => (
-                          <option key={i} value={i}>{m}</option>
-                        ))}
-                      </select>
-                      <div className="w-px h-4 bg-slate-200 mx-1" />
-                      <select 
-                        value={selectedPeriod.year}
-                        onChange={(e) => setSelectedPeriod(prev => ({ ...prev, year: Number(e.target.value) }))}
-                        className="bg-transparent text-xs font-bold text-slate-700 outline-none cursor-pointer py-1 pr-2"
-                      >
-                        {[2024, 2025, 2026, 2027].map(y => (
-                          <option key={y} value={y}>{y}</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
 
             <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
