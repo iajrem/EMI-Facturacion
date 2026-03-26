@@ -156,6 +156,7 @@ interface Rates {
     avgBilling12Months: number; // For Vacations proportional
     avgBilling6Months: number;  // For Prima proportional
     billingCutoffDay: number;   // Day of the month for billing cutoff
+    nightShiftStart: number;    // Hour when night shift starts (e.g., 19 for 7 PM)
   };
 }
 
@@ -235,6 +236,7 @@ const DEFAULT_RATES: Rates = {
     avgBilling6Months: 0,
     avgBilling12Months: 0,
     billingCutoffDay: 29,
+    nightShiftStart: 19,
   }
 };
 
@@ -369,6 +371,7 @@ function MainApp() {
   const [calcName, setCalcName] = useState('');
   const [autoCalculatePatients, setAutoCalculatePatients] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [viewingArchive, setViewingArchive] = useState<SavedCalculation | null>(null);
 
   // Load saved calculations from localStorage on mount
   useEffect(() => {
@@ -404,12 +407,12 @@ function MainApp() {
       let current = new Date(start);
 
       while (current < end) {
-        const hour = current.getHours();
         const isSecondDay = current.getDate() > start.getDate();
         const isHolidayNow = isSecondDay ? shift.isHolidayEnd : shift.isHolidayStart;
         
-        // Day: 6:00 AM to 7:00 PM (19:00)
-        const isDaytime = hour >= 6 && hour < 19;
+        // Night shift in Colombia: 7:00 PM (19:00) to 6:00 AM
+        const hour = current.getHours();
+        const isDaytime = hour >= 6 && hour < rates.payroll.nightShiftStart;
 
         if (isDaytime && !isHolidayNow) minsD++;
         else if (!isDaytime && !isHolidayNow) minsN++;
@@ -430,8 +433,9 @@ function MainApp() {
         return {
           ...prev,
           hours: shift.isAVAShift ? { day: 0, night: 0, holidayDay: 0, holidayNight: 0 } : h,
-          ava: shift.isAVAShift ? h : prev.ava,
-          patients: autoCalculatePatients ? h : prev.patients
+          ava: shift.isAVAShift ? h : { day: 0, night: 0, holidayDay: 0, holidayNight: 0 },
+          patients: (autoCalculatePatients && !shift.isAVAShift) ? h : (shift.isAVAShift ? { day: 0, night: 0, holidayDay: 0, holidayNight: 0 } : prev.patients),
+          applyPatients: shift.isAVAShift ? false : prev.applyPatients
         };
       });
     };
@@ -442,6 +446,7 @@ function MainApp() {
   // --- Actions ---
   const addRecord = async () => {
     if (!user) return;
+
     const recordId = editingId || crypto.randomUUID();
     const newRecord: ShiftRecord = {
       id: recordId,
@@ -453,9 +458,43 @@ function MainApp() {
       ava: { ...quantities.ava },
       patients: { ...quantities.patients },
       applyPatients: quantities.applyPatients,
-      isDefinitive: editingId ? (records.find(r => r.id === editingId)?.isDefinitive || false) : false,
+      isDefinitive: editingId 
+        ? (viewingArchive 
+            ? viewingArchive.records.find(r => r.id === editingId)?.isDefinitive 
+            : records.find(r => r.id === editingId)?.isDefinitive) || false 
+        : false,
     };
-    
+
+    if (viewingArchive) {
+      // Update local archive state
+      const updatedRecords = editingId 
+        ? viewingArchive.records.map(r => r.id === editingId ? newRecord : r)
+        : [...viewingArchive.records, newRecord];
+      
+      setViewingArchive({
+        ...viewingArchive,
+        records: sortRecords(updatedRecords)
+      });
+      
+      // Reset form
+      setEditingId(null);
+      setShift({
+        date: new Date().toISOString().split('T')[0],
+        startTime: '07:00',
+        endTime: '19:00',
+        isHolidayStart: false,
+        isHolidayEnd: false,
+        isAVAShift: false,
+      });
+      setQuantities({
+        hours: { day: 0, night: 0, holidayDay: 0, holidayNight: 0 },
+        ava: { day: 0, night: 0, holidayDay: 0, holidayNight: 0 },
+        patients: { day: 0, night: 0, holidayDay: 0, holidayNight: 0 },
+        applyPatients: true,
+      });
+      return;
+    }
+
     const path = `users/${user.uid}/records/${recordId}`;
     try {
       await setDoc(doc(db, path), newRecord);
@@ -483,6 +522,15 @@ function MainApp() {
   const removeRecord = async (id: string) => {
     if (!user) return;
     if (editingId === id) setEditingId(null);
+
+    if (viewingArchive) {
+      setViewingArchive({
+        ...viewingArchive,
+        records: viewingArchive.records.filter(r => r.id !== id)
+      });
+      return;
+    }
+
     const path = `users/${user.uid}/records/${id}`;
     try {
       await deleteDoc(doc(db, path));
@@ -493,6 +541,17 @@ function MainApp() {
 
   const toggleRecordStatus = async (id: string) => {
     if (!user) return;
+
+    if (viewingArchive) {
+      setViewingArchive({
+        ...viewingArchive,
+        records: viewingArchive.records.map(r => 
+          r.id === id ? { ...r, isDefinitive: !r.isDefinitive } : r
+        )
+      });
+      return;
+    }
+
     const record = records.find(r => r.id === id);
     if (!record) return;
     const path = `users/${user.uid}/records/${id}`;
@@ -522,7 +581,8 @@ function MainApp() {
   };
 
   const exportToCSV = () => {
-    if (records.length === 0) {
+    const baseRecords = viewingArchive ? viewingArchive.records : records;
+    if (baseRecords.length === 0) {
       alert('No hay registros para exportar.');
       return;
     }
@@ -534,7 +594,7 @@ function MainApp() {
       'Pac Diu', 'Pac Noc', 'Pac F-Diu', 'Pac F-Noc'
     ];
 
-    const rows = records.map(r => [
+    const rows = baseRecords.map(r => [
       r.date, r.startTime, r.endTime, r.isDefinitive ? 'Definitivo' : 'Proyección',
       r.hours.day, r.hours.night, r.hours.holidayDay, r.hours.holidayNight,
       r.ava.day, r.ava.night, r.ava.holidayDay, r.ava.holidayNight,
@@ -573,11 +633,12 @@ function MainApp() {
 
   // --- Persistence Actions ---
   const saveCurrentCalculation = () => {
+    const baseRecords = viewingArchive ? viewingArchive.records : records;
     if (!calcName.trim()) {
       alert('Por favor, ingresa un nombre para guardar el extracto.');
       return;
     }
-    if (records.length === 0) {
+    if (baseRecords.length === 0) {
       alert('No hay turnos para guardar.');
       return;
     }
@@ -586,7 +647,7 @@ function MainApp() {
       id: crypto.randomUUID(),
       name: calcName.trim(),
       timestamp: new Date().toLocaleString(),
-      records: [...records],
+      records: [...baseRecords],
       rates: { ...rates },
       additionalDeductions: additionalDeductions
     };
@@ -597,13 +658,29 @@ function MainApp() {
   };
 
   const loadCalculation = (saved: SavedCalculation) => {
-    if (records.length > 0 && !confirm('¿Estás seguro? Se perderán los datos actuales no guardados.')) {
-      return;
-    }
-    setRecords(sortRecords(saved.records));
+    setViewingArchive({ ...saved });
     setRates(saved.rates);
     setAdditionalDeductions(Array.isArray(saved.additionalDeductions) ? saved.additionalDeductions : []);
-    alert(`Extracto "${saved.name}" cargado.`);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const saveUpdatedArchive = () => {
+    if (!viewingArchive) return;
+    
+    const updatedArchives = savedCalculations.map(s => 
+      s.id === viewingArchive.id ? { ...viewingArchive, timestamp: new Date().toLocaleString() } : s
+    );
+    
+    setSavedCalculations(updatedArchives);
+    alert('Cambios guardados en el extracto.');
+  };
+
+  const closeArchive = () => {
+    setViewingArchive(null);
+    // Restore current rates and deductions from live state if needed
+    // Actually, rates and deductions are shared for now, but we could restore them if we wanted.
+    // For now, just returning to live records is enough.
+    alert('Regresando a la bitácora en vivo.');
   };
 
   const deleteSavedCalculation = (id: string) => {
@@ -663,8 +740,11 @@ function MainApp() {
     const currentMonth = now.getMonth();
     const cutoff = rates.payroll.billingCutoffDay;
 
+    // Determine which records to use: Archive or Live
+    const baseRecords = viewingArchive ? viewingArchive.records : records;
+
     // If editing, replace the record in the list with the current form values
-    let recordsToCalculate = [...records];
+    let recordsToCalculate = [...baseRecords];
     if (editingId) {
       const currentFormRecord: ShiftRecord = {
         id: editingId,
@@ -676,35 +756,38 @@ function MainApp() {
         ava: { ...quantities.ava },
         patients: { ...quantities.patients },
         applyPatients: quantities.applyPatients,
-        isDefinitive: records.find(r => r.id === editingId)?.isDefinitive || false,
+        isDefinitive: (viewingArchive 
+          ? viewingArchive.records.find(r => r.id === editingId)?.isDefinitive 
+          : records.find(r => r.id === editingId)?.isDefinitive) || false,
       };
       recordsToCalculate = recordsToCalculate.map(r => r.id === editingId ? currentFormRecord : r);
     }
 
-    const filteredRecords = recordsToCalculate.filter(record => {
-      const recordDate = new Date(record.date + 'T00:00:00');
-      const rYear = recordDate.getFullYear();
-      const rMonth = recordDate.getMonth();
-      const rDay = recordDate.getDate();
+    const filteredRecords = viewingArchive ? recordsToCalculate : recordsToCalculate.filter(record => {
+      const rDate = new Date(record.date + 'T00:00:00');
+      const rYear = rDate.getFullYear();
+      const rMonth = rDate.getMonth();
+      const rDay = rDate.getDate();
 
-      // Logic: A record belongs to the "current" cycle if it's after the previous cutoff
-      // and before or on the current cutoff.
-      // For simplicity, let's just filter for the cycle that includes "today"
-      
-      let cycleStart: Date;
-      let cycleEnd: Date;
-
+      // Determine the target billing month (the one that contains "now")
+      let targetMonth = currentMonth;
+      let targetYear = currentYear;
       if (now.getDate() > cutoff) {
-        // We are in the cycle that started after this month's cutoff
-        cycleStart = new Date(currentYear, currentMonth, cutoff + 1);
-        cycleEnd = new Date(currentYear, currentMonth + 1, cutoff);
-      } else {
-        // We are in the cycle that ends with this month's cutoff
-        cycleStart = new Date(currentYear, currentMonth - 1, cutoff + 1);
-        cycleEnd = new Date(currentYear, currentMonth, cutoff);
+        targetMonth++;
+        if (targetMonth > 11) {
+          targetMonth = 0;
+          targetYear++;
+        }
       }
 
-      return recordDate >= cycleStart && recordDate <= cycleEnd;
+      // A record belongs to the target cycle if:
+      // (rMonth == targetMonth && rDay <= cutoff) OR (rMonth == targetMonth - 1 && rDay > cutoff)
+      const isSameMonth = rMonth === targetMonth && rYear === targetYear;
+      const prevMonth = targetMonth === 0 ? 11 : targetMonth - 1;
+      const prevYear = targetMonth === 0 ? targetYear - 1 : targetYear;
+      const isPrevMonth = rMonth === prevMonth && rYear === prevYear;
+      
+      return (isSameMonth && rDay <= cutoff) || (isPrevMonth && rDay > cutoff);
     });
 
     filteredRecords.forEach(record => {
@@ -772,7 +855,8 @@ function MainApp() {
 
     // --- Retefuente Calculation (Procedimiento 1 - Art. 383, 387, 388 ET) ---
     const uvt = rates.payroll.uvtValue;
-    const totalIncomeForTax = gross + primaProporcional + vacacionesProporcional;
+    // Primas and Vacations are usually not part of the monthly taxable base for Retefuente
+    const totalIncomeForTax = gross; 
     
     // 1. Ingresos No Constitutivos de Renta (Legal deductions: Health, Pension, FSP)
     const netIncome = totalIncomeForTax - legalDeductions;
@@ -836,7 +920,7 @@ function MainApp() {
       totalMonthlyHours,
       totalMonthlyPatients
     };
-  }, [records, rates, additionalDeductions, editingId, shift, quantities]);
+  }, [records, rates, additionalDeductions, viewingArchive, shift, quantities, editingId, user]);
 
   if (!isAuthReady) {
     return (
@@ -941,6 +1025,37 @@ function MainApp() {
           </button>
         </div>
       </header>
+
+      {/* Archive Viewing Banner */}
+      {viewingArchive && (
+        <div className="bg-amber-50 border-b border-amber-200 px-6 py-3 flex items-center justify-between sticky top-[73px] z-20">
+          <div className="flex items-center gap-3">
+            <div className="bg-amber-100 p-1.5 rounded-lg">
+              <FolderOpen className="text-amber-600 w-4 h-4" />
+            </div>
+            <div>
+              <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Viendo Extracto Guardado</p>
+              <h2 className="text-sm font-bold text-amber-900">{viewingArchive.name}</h2>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={saveUpdatedArchive}
+              className="px-4 py-1.5 bg-amber-600 text-white text-xs font-bold rounded-lg hover:bg-amber-700 transition-all flex items-center gap-2 shadow-sm"
+            >
+              <Save className="w-3 h-3" />
+              Guardar Cambios
+            </button>
+            <button 
+              onClick={closeArchive}
+              className="px-4 py-1.5 bg-white border border-amber-200 text-amber-700 text-xs font-bold rounded-lg hover:bg-amber-100 transition-all flex items-center gap-2"
+            >
+              <X className="w-3 h-3" />
+              Cerrar y Volver a Bitácora
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-col lg:flex-row">
         {/* Sidebar: Configuration */}
@@ -1182,6 +1297,26 @@ function MainApp() {
                           payroll: { ...rates.payroll, dependents: e.target.checked }
                         })}
                         className="w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-xl">
+                      <div className="flex flex-col">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1">
+                          Inicio Hora Nocturna
+                          <span title="Hora en que comienza el recargo nocturno (ej: 19 para las 7 PM)"><Info className="w-3 h-3 text-slate-400" /></span>
+                        </label>
+                        <span className="text-[10px] text-slate-400">Formato 24h (ej: 19 = 7 PM)</span>
+                      </div>
+                      <input 
+                        type="number"
+                        min="0"
+                        max="23"
+                        value={rates.payroll.nightShiftStart}
+                        onChange={(e) => setRates({
+                          ...rates,
+                          payroll: { ...rates.payroll, nightShiftStart: Number(e.target.value) }
+                        })}
+                        className="w-16 bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-xs text-right focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono"
                       />
                     </div>
                     <div>
@@ -1569,7 +1704,9 @@ function MainApp() {
           <section className="space-y-6">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-full bg-slate-800 text-white flex items-center justify-center font-bold text-sm">3</div>
-              <h2 className="text-xl font-bold text-slate-800">Bitácora de Turnos (Acumulado)</h2>
+              <h2 className="text-xl font-bold text-slate-800">
+                {viewingArchive ? `Extracto: ${viewingArchive.name}` : 'Bitácora de Turnos (Acumulado)'}
+              </h2>
             </div>
 
             <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
@@ -1608,12 +1745,12 @@ function MainApp() {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     <AnimatePresence initial={false}>
-                      {records.length === 0 ? (
+                      {(viewingArchive ? viewingArchive.records : records).length === 0 ? (
                         <tr>
                           <td colSpan={6} className="p-10 text-center text-slate-400 italic">No hay turnos registrados aún. Agrega tu primer turno arriba.</td>
                         </tr>
                       ) : (
-                        records.map((record) => (
+                        (viewingArchive ? viewingArchive.records : records).map((record) => (
                           <motion.tr 
                             key={record.id}
                             initial={{ opacity: 0, y: 10 }}
@@ -1708,7 +1845,7 @@ function MainApp() {
           </section>
 
           {/* Save Calculation */}
-          {records.length > 0 && (
+          {(viewingArchive ? viewingArchive.records : records).length > 0 && (
             <section className="bg-indigo-50 p-6 rounded-3xl border border-indigo-100 flex flex-col md:flex-row items-center gap-4">
               <div className="flex items-center gap-3 shrink-0">
                 <div className="bg-white p-2 rounded-xl shadow-sm">
@@ -1752,7 +1889,7 @@ function MainApp() {
               <h2 className="text-xl font-bold text-slate-800">Extracto Final</h2>
             </div>
 
-            {records.length > 0 ? (
+            {(viewingArchive ? viewingArchive.records : records).length > 0 ? (
               <>
                 {/* Reporte de Cantidades */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
