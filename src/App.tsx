@@ -40,8 +40,11 @@ import {
   History,
   Download,
   Upload,
-  RotateCcw
+  RotateCcw,
+  FileDown
 } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import 'jspdf-autotable';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   auth, 
@@ -868,6 +871,81 @@ function MainApp() {
       applyPatients: record.applyPatients,
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const exportToPDF = () => {
+    const doc = new jsPDF();
+    const period = periods.find(p => p.id === selectedPeriodId);
+    const periodName = period?.name || 'Extracto de Pago';
+    const dateRange = period ? `${period.startDate} a ${period.endDate}` : '';
+    
+    // Header
+    doc.setFontSize(20);
+    doc.setTextColor(30, 41, 59); // slate-800
+    doc.text('EXTRACTO DE PAGO / NÓMINA', 14, 22);
+    
+    doc.setFontSize(10);
+    doc.setTextColor(100, 116, 139); // slate-500
+    doc.text(`Generado el: ${new Date().toLocaleString()}`, 14, 30);
+    doc.text(`Periodo: ${periodName} (${dateRange})`, 14, 35);
+    doc.text(`Usuario: ${user?.email || 'N/A'}`, 14, 40);
+
+    // Summary Table
+    const summaryData = [
+      ['Concepto', 'Valor'],
+      ['Sueldo Básico (Turnos)', formatCurrency(results.gross)],
+      ['Prima Proporcional', formatCurrency(results.primaProporcional)],
+      ['Cesantías Proporcionales', formatCurrency(results.cesantiasProporcional)],
+      ['Intereses Cesantías', formatCurrency(results.interesesCesantias)],
+      ['Vacaciones Proporcionales', formatCurrency(results.vacacionesProporcional)],
+      ['TOTAL DEVENGADO', formatCurrency(results.totalGross)],
+      ['', ''],
+      ['Salud (4%)', `-${formatCurrency(results.health)}`],
+      ['Pensión (4%)', `-${formatCurrency(results.pension)}`],
+      ['ARL (0.522%)', `-${formatCurrency(results.arl)}`],
+      ['Caja de Compensación', formatCurrency(results.caja)],
+      ['FSP', results.fsp > 0 ? `-${formatCurrency(results.fsp)}` : '$0'],
+      ['Retención en la Fuente', results.retefuente > 0 ? `-${formatCurrency(results.retefuente)}` : '$0'],
+      ['Otras Deducciones', results.additionalDeductions > 0 ? `-${formatCurrency(results.additionalDeductions)}` : '$0'],
+      ['TOTAL DEDUCCIONES', `-${formatCurrency(results.totalDeductions)}`],
+      ['', ''],
+      ['NETO A RECIBIR', formatCurrency(results.net)],
+    ];
+
+    (doc as any).autoTable({
+      startY: 50,
+      head: [summaryData[0]],
+      body: summaryData.slice(1),
+      theme: 'striped',
+      headStyles: { fillColor: [30, 41, 59], textColor: 255 },
+      columnStyles: {
+        1: { halign: 'right', fontStyle: 'bold' }
+      }
+    });
+
+    // Detailed Records Table
+    doc.addPage();
+    doc.setFontSize(16);
+    doc.text('DETALLE DE TURNOS', 14, 22);
+
+    const recordsData = (viewingArchive ? viewingArchive.records : records).map(r => [
+      r.date,
+      `${r.startTime}-${r.endTime}`,
+      `${r.hours.day}/${r.hours.night}/${r.hours.holidayDay}/${r.hours.holidayNight}`,
+      `${r.ava.day}/${r.ava.night}/${r.ava.holidayDay}/${r.ava.holidayNight}`,
+      r.applyPatients ? `${r.patients.day}/${r.patients.night}/${r.patients.holidayDay}/${r.patients.holidayNight}` : 'N/A',
+    ]);
+
+    (doc as any).autoTable({
+      startY: 30,
+      head: [['Fecha', 'Horario', 'H. Consulta (D/N/FD/FN)', 'H. AVA (D/N/FD/FN)', 'Pacientes (D/N/FD/FN)']],
+      body: recordsData,
+      theme: 'grid',
+      headStyles: { fillColor: [71, 85, 105], fontSize: 8 },
+      styles: { fontSize: 7 }
+    });
+
+    doc.save(`Extracto_${periodName.replace(/\s+/g, '_')}.pdf`);
   };
 
   const exportToCSV = () => {
@@ -2450,6 +2528,13 @@ function MainApp() {
                     <p className="text-slate-500 font-medium">Resumen detallado de ingresos y deducciones legales.</p>
                   </div>
                   <div className="flex items-center gap-3">
+                    <button 
+                      onClick={exportToPDF}
+                      className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl hover:bg-indigo-100 transition-all"
+                      title="Exportar PDF"
+                    >
+                      <FileDown className="w-5 h-5" />
+                    </button>
                     <button 
                       onClick={() => window.print()}
                       className="p-3 bg-slate-100 text-slate-600 rounded-2xl hover:bg-slate-200 transition-all"
