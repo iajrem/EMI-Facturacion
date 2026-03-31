@@ -38,7 +38,9 @@ import {
   PlusCircle,
   MinusCircle,
   History,
-  Download
+  Download,
+  Upload,
+  RotateCcw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -136,6 +138,7 @@ interface BillingPeriod {
   endDate: string;
   status: 'active' | 'archived';
   createdAt: string;
+  totalGross?: number;
 }
 
 interface SavedCalculation {
@@ -537,9 +540,12 @@ function MainApp() {
 
     const path = `users/${user.uid}/periods/${periodId}`;
     try {
-      // If there's an active period, archive it first
+      // If there's an active period, archive it first and save its final gross
       if (activePeriod) {
-        await updateDoc(doc(db, `users/${user.uid}/periods/${activePeriod.id}`), { status: 'archived' });
+        await updateDoc(doc(db, `users/${user.uid}/periods/${activePeriod.id}`), { 
+          status: 'archived',
+          totalGross: results.gross
+        });
       }
       
       await setDoc(doc(db, path), newPeriod);
@@ -650,6 +656,115 @@ function MainApp() {
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
     }
+  };
+
+  const updatePeriodTotalGross = async () => {
+    if (!user || !selectedPeriodId) return;
+    const period = periods.find(p => p.id === selectedPeriodId);
+    if (!period) return;
+    
+    const path = `users/${user.uid}/periods/${selectedPeriodId}`;
+    try {
+      await updateDoc(doc(db, path), { totalGross: results.gross });
+      alert('Total bruto del periodo actualizado con éxito.');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, path);
+    }
+  };
+
+  const updatePeriodName = async (id: string, newName: string) => {
+    if (!user || !newName.trim()) return;
+    const path = `users/${user.uid}/periods/${id}`;
+    try {
+      await updateDoc(doc(db, path), { name: newName.trim() });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, path);
+    }
+  };
+
+  const reactivatePeriod = async (id: string) => {
+    if (!user) return;
+    try {
+      // Archive current active period if any
+      if (activePeriod && activePeriod.id !== id) {
+        await updateDoc(doc(db, `users/${user.uid}/periods/${activePeriod.id}`), { status: 'archived' });
+      }
+      // Reactivate target period
+      await updateDoc(doc(db, `users/${user.uid}/periods/${id}`), { status: 'active' });
+      setSelectedPeriodId(id);
+      alert('Periodo reactivado con éxito.');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}/periods/${id}`);
+    }
+  };
+
+  const importFromCSV = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !user || !selectedPeriodId) return;
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const text = e.target?.result as string;
+      const lines = text.split('\n');
+      const headers = lines[0].split(',');
+      
+      // Basic validation of headers
+      if (!headers.includes('Fecha') || !headers.includes('Inicio') || !headers.includes('Fin')) {
+        alert('El archivo CSV no tiene el formato correcto. Asegúrate de que tenga las columnas Fecha, Inicio y Fin.');
+        return;
+      }
+
+      const recordsToImport: ShiftRecord[] = [];
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line || line.startsWith('RESUMEN') || line === '') continue;
+        
+        const values = line.split(',');
+        if (values.length < 3) continue;
+
+        const record: ShiftRecord = {
+          id: crypto.randomUUID(),
+          userId: user.uid,
+          periodId: selectedPeriodId,
+          date: values[headers.indexOf('Fecha')],
+          startTime: values[headers.indexOf('Inicio')],
+          endTime: values[headers.indexOf('Fin')],
+          hours: {
+            day: Number(values[headers.indexOf('Horas Diu')] || 0),
+            night: Number(values[headers.indexOf('Horas Noc')] || 0),
+            holidayDay: Number(values[headers.indexOf('Horas F-Diu')] || 0),
+            holidayNight: Number(values[headers.indexOf('Horas F-Noc')] || 0),
+          },
+          ava: {
+            day: Number(values[headers.indexOf('AVA Diu')] || 0),
+            night: Number(values[headers.indexOf('AVA Noc')] || 0),
+            holidayDay: Number(values[headers.indexOf('AVA F-Diu')] || 0),
+            holidayNight: Number(values[headers.indexOf('AVA F-Noc')] || 0),
+          },
+          patients: {
+            day: Number(values[headers.indexOf('Pac Diu')] || 0),
+            night: Number(values[headers.indexOf('Pac Noc')] || 0),
+            holidayDay: Number(values[headers.indexOf('Pac F-Diu')] || 0),
+            holidayNight: Number(values[headers.indexOf('Pac F-Noc')] || 0),
+          },
+          applyPatients: true,
+          isDefinitive: values[headers.indexOf('Estado')] === 'Definitivo',
+        };
+        recordsToImport.push(record);
+      }
+
+      if (recordsToImport.length > 0) {
+        try {
+          for (const record of recordsToImport) {
+            await setDoc(doc(db, `users/${user.uid}/records/${record.id}`), record);
+          }
+          alert(`${recordsToImport.length} registros importados con éxito.`);
+        } catch (error) {
+          handleFirestoreError(error, OperationType.CREATE, `users/${user.uid}/records`);
+        }
+      }
+    };
+    reader.readAsText(file);
   };
 
   const toggleRecordStatus = async (id: string) => {
@@ -978,13 +1093,24 @@ function MainApp() {
     const sumAdditionalDeductions = additionalDeductions.reduce((sum, d) => sum + d.amount, 0);
     const legalDeductions = health + pension + fsp;
 
-    // --- Prima Proporcional (6 meses) ---
-    // Medio sueldo cada 6 meses -> 1/12 del promedio mensual
-    const primaProporcional = rates.payroll.avgBilling6Months / 12;
+    // --- Proportional Calculations based on Period History ---
+    const currentPeriod = periods.find(p => p.id === selectedPeriodId);
+    const otherPeriods = periods.filter(p => p.id !== selectedPeriodId && p.endDate < (currentPeriod?.startDate || ''));
+    const sortedOthers = [...otherPeriods].sort((a, b) => b.endDate.localeCompare(a.endDate));
+    
+    // Prima Proporcional (Average of last 6 months including current)
+    const last5Others = sortedOthers.slice(0, 5);
+    const total6 = last5Others.reduce((sum, p) => sum + (p.totalGross || 0), 0) + gross;
+    const count6 = last5Others.length + 1;
+    const avg6 = total6 / count6;
+    const primaProporcional = avg6 / 12;
 
-    // --- Vacaciones Proporcionales (12 meses) ---
-    // 15 días por año -> 1/24 del promedio mensual
-    const vacacionesProporcional = rates.payroll.avgBilling12Months / 24;
+    // Vacaciones Proporcionales (Average of last 12 months including current)
+    const last11Others = sortedOthers.slice(0, 11);
+    const total12 = last11Others.reduce((sum, p) => sum + (p.totalGross || 0), 0) + gross;
+    const count12 = last11Others.length + 1;
+    const avg12 = total12 / count12;
+    const vacacionesProporcional = avg12 / 24;
 
     // --- Retefuente Calculation (Procedimiento 1 - Art. 383, 387, 388 ET) ---
     const uvt = rates.payroll.uvtValue;
@@ -1672,9 +1798,12 @@ function MainApp() {
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <h3 className="text-lg font-bold text-slate-800">
-                        {periods.find(p => p.id === selectedPeriodId)?.name}
-                      </h3>
+                      <input 
+                        type="text"
+                        defaultValue={periods.find(p => p.id === selectedPeriodId)?.name}
+                        onBlur={(e) => updatePeriodName(selectedPeriodId, e.target.value)}
+                        className="text-lg font-bold text-slate-800 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-indigo-500 focus:ring-0 outline-none transition-all px-1"
+                      />
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
                         periods.find(p => p.id === selectedPeriodId)?.status === 'active' 
                           ? 'bg-emerald-100 text-emerald-700' 
@@ -1698,18 +1827,48 @@ function MainApp() {
                     Cerrar y Nuevo Periodo
                   </button>
                 ) : (
-                  <div className="flex items-center gap-3 bg-white/50 p-3 rounded-2xl border border-amber-200/50">
-                    <Info className="w-4 h-4 text-amber-600" />
-                    <p className="text-xs text-amber-800 font-medium">Este periodo está archivado. Los cambios se guardarán pero no afectarán el registro activo.</p>
+                  <div className="flex flex-col md:flex-row items-center gap-3 bg-white/50 p-3 rounded-2xl border border-amber-200/50">
+                    <div className="flex items-center gap-2">
+                      <Info className="w-4 h-4 text-amber-600" />
+                      <p className="text-xs text-amber-800 font-medium">Este periodo está archivado.</p>
+                    </div>
+                    <button 
+                      onClick={() => reactivatePeriod(selectedPeriodId)}
+                      className="px-4 py-2 bg-indigo-600 text-white text-[10px] font-bold rounded-xl hover:bg-indigo-700 transition-all flex items-center gap-2 shadow-sm"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      Reactivar Periodo
+                    </button>
+                    <button 
+                      onClick={updatePeriodTotalGross}
+                      className="px-4 py-2 bg-amber-600 text-white text-[10px] font-bold rounded-xl hover:bg-amber-700 transition-all flex items-center gap-2 shadow-sm"
+                    >
+                      <Save className="w-3 h-3" />
+                      Actualizar Cierre
+                    </button>
                   </div>
                 )}
               </div>
             )}
             
             <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-6">
-              <div className="flex items-center gap-2 text-indigo-600 mb-2">
-                <FilePlus className="w-5 h-5" />
-                <h3 className="text-sm font-bold uppercase tracking-wider">Registrar Turno</h3>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 text-indigo-600">
+                  <FilePlus className="w-5 h-5" />
+                  <h3 className="text-sm font-bold uppercase tracking-wider">Registrar Turno</h3>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="cursor-pointer px-3 py-1.5 bg-slate-100 text-slate-600 text-[10px] font-bold rounded-lg hover:bg-slate-200 transition-all flex items-center gap-2">
+                    <Upload className="w-3 h-3" />
+                    Importar CSV
+                    <input 
+                      type="file" 
+                      accept=".csv" 
+                      onChange={importFromCSV} 
+                      className="hidden" 
+                    />
+                  </label>
+                </div>
               </div>
               <div className="flex items-start gap-3 bg-blue-50 p-4 rounded-2xl text-blue-700 text-sm leading-relaxed">
                 <Info className="w-5 h-5 shrink-0 mt-0.5" />
@@ -2369,6 +2528,12 @@ function MainApp() {
                       <p className="text-[10px] text-slate-500 font-medium">
                         {p.startDate} al {p.endDate}
                       </p>
+                      {p.totalGross !== undefined && (
+                        <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Total Bruto</span>
+                          <span className="text-xs font-bold text-emerald-600">{formatCurrency(p.totalGross)}</span>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

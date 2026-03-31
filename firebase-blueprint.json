@@ -65,11 +65,11 @@
         "id": { "type": "string" },
         "userId": { "type": "string" },
         "periodId": { "type": "string" },
-        "label": { "type": "string" },
+        "concept": { "type": "string" },
         "amount": { "type": "number" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "userId", "label", "amount"]
+      "required": ["id", "userId", "concept", "amount"]
     },
     "BillingPeriod": {
       "title": "Billing Period",
@@ -82,7 +82,8 @@
         "startDate": { "type": "string" },
         "endDate": { "type": "string" },
         "status": { "type": "string", "enum": ["active", "archived"] },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "createdAt": { "type": "string", "format": "date-time" },
+        "totalGross": { "type": "number" }
       },
       "required": ["id", "userId", "startDate", "endDate", "status"]
     }
