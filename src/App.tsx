@@ -2665,20 +2665,97 @@ function MainApp() {
                   {(viewingArchive ? viewingArchive.records : records).length > 0 && (
                     <tfoot className="bg-slate-50 border-t-2 border-slate-200">
                       <tr>
-                        <td colSpan={3} className="p-4 text-right text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                        <td colSpan={3} className="p-4 text-right text-[10px] font-bold text-slate-400 uppercase tracking-widest align-top">
                           Totales del Periodo:
                         </td>
-                        <td className="p-4 text-xs font-mono font-black text-indigo-600">
-                          {results.totalMonthlyHours}h
+                        <td className="p-4 align-top">
+                          <div className="flex flex-col gap-2">
+                            <div className="flex flex-col">
+                              <span className="text-xs font-mono font-black text-indigo-600">{results.totalMonthlyHours}h</span>
+                              <span className="text-[9px] font-bold text-slate-400 uppercase">Horas Consulta</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-x-2 text-[8px] font-bold uppercase tracking-tighter">
+                              <span className="text-amber-600">D: {results.hoursBreakdown.day}h</span>
+                              <span className="text-indigo-600">N: {results.hoursBreakdown.night}h</span>
+                              <span className="text-rose-600">DF: {results.hoursBreakdown.holidayDay}h</span>
+                              <span className="text-purple-600">NF: {results.hoursBreakdown.holidayNight}h</span>
+                            </div>
+                            <div className="pt-1 border-t border-slate-200">
+                              <span className="text-[9px] font-bold text-slate-600">{formatCurrency(results.totalH)}</span>
+                            </div>
+                          </div>
                         </td>
-                        <td className="p-4 text-xs font-mono font-black text-violet-600">
-                          {results.totalMonthlyAVA}h
+                        <td className="p-4 align-top">
+                          <div className="flex flex-col gap-2">
+                            <div className="flex flex-col">
+                              <span className="text-xs font-mono font-black text-violet-600">{results.totalMonthlyAVA}h</span>
+                              <span className="text-[9px] font-bold text-slate-400 uppercase">Horas AVA</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-x-2 text-[8px] font-bold uppercase tracking-tighter">
+                              <span className="text-amber-600">D: {results.avaBreakdown.day}h</span>
+                              <span className="text-indigo-600">N: {results.avaBreakdown.night}h</span>
+                              <span className="text-rose-600">DF: {results.avaBreakdown.holidayDay}h</span>
+                              <span className="text-purple-600">NF: {results.avaBreakdown.holidayNight}h</span>
+                            </div>
+                            <div className="pt-1 border-t border-slate-200">
+                              <span className="text-[9px] font-bold text-slate-600">{formatCurrency(results.totalAVA)}</span>
+                            </div>
+                          </div>
                         </td>
-                        <td className="p-4 text-xs font-mono font-black text-emerald-600">
-                          {results.totalMonthlyPatients} Pac.
+                        <td className="p-4 align-top">
+                          <div className="flex flex-col gap-2">
+                            <div className="flex flex-col">
+                              <span className="text-xs font-mono font-black text-emerald-600">{results.totalMonthlyPatients} Pac.</span>
+                              <span className="text-[9px] font-bold text-slate-400 uppercase">Pacientes</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-x-2 text-[8px] font-bold uppercase tracking-tighter">
+                              <span className="text-amber-600">D: {results.patientsBreakdown.day}</span>
+                              <span className="text-indigo-600">N: {results.patientsBreakdown.night}</span>
+                              <span className="text-rose-600">DF: {results.patientsBreakdown.holidayDay}</span>
+                              <span className="text-purple-600">NF: {results.patientsBreakdown.holidayNight}</span>
+                            </div>
+                            <div className="pt-1 border-t border-slate-200">
+                              <span className="text-[9px] font-bold text-slate-600">{formatCurrency(results.totalP)}</span>
+                            </div>
+                          </div>
                         </td>
-                        <td className="p-4 text-xs font-mono font-black text-slate-800">
-                          {formatCurrency(results.gross)}
+                        <td className="p-4 align-top">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs font-mono font-black text-slate-800">{formatCurrency(results.gross)}</span>
+                            <span className="text-[9px] font-bold text-slate-400 uppercase">Bruto Total</span>
+                            <div className="mt-2 p-2 bg-indigo-50 rounded-lg border border-indigo-100">
+                              <p className="text-[8px] font-bold text-indigo-600 uppercase mb-1">Resumen Dinero</p>
+                              <div className="flex flex-col gap-1 text-[8px] font-bold text-slate-500">
+                                <div className="flex flex-col border-b border-indigo-100 pb-1">
+                                  <div className="flex justify-between text-indigo-600"><span>Consulta:</span> <span>{formatCurrency(results.totalH)}</span></div>
+                                  <div className="grid grid-cols-2 gap-x-2 text-[7px] opacity-70">
+                                    <span>D: {formatCurrency(results.hoursValues.day)}</span>
+                                    <span>N: {formatCurrency(results.hoursValues.night)}</span>
+                                    <span>DF: {formatCurrency(results.hoursValues.holidayDay)}</span>
+                                    <span>NF: {formatCurrency(results.hoursValues.holidayNight)}</span>
+                                  </div>
+                                </div>
+                                <div className="flex flex-col border-b border-indigo-100 pb-1">
+                                  <div className="flex justify-between text-violet-600"><span>AVA:</span> <span>{formatCurrency(results.totalAVA)}</span></div>
+                                  <div className="grid grid-cols-2 gap-x-2 text-[7px] opacity-70">
+                                    <span>D: {formatCurrency(results.avaValues.day)}</span>
+                                    <span>N: {formatCurrency(results.avaValues.night)}</span>
+                                    <span>DF: {formatCurrency(results.avaValues.holidayDay)}</span>
+                                    <span>NF: {formatCurrency(results.avaValues.holidayNight)}</span>
+                                  </div>
+                                </div>
+                                <div className="flex flex-col">
+                                  <div className="flex justify-between text-emerald-600"><span>Pacientes:</span> <span>{formatCurrency(results.totalP)}</span></div>
+                                  <div className="grid grid-cols-2 gap-x-2 text-[7px] opacity-70">
+                                    <span>D: {formatCurrency(results.patientsValues.day)}</span>
+                                    <span>N: {formatCurrency(results.patientsValues.night)}</span>
+                                    <span>DF: {formatCurrency(results.patientsValues.holidayDay)}</span>
+                                    <span>NF: {formatCurrency(results.patientsValues.holidayNight)}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
                         </td>
                         <td colSpan={2}></td>
                       </tr>
