@@ -194,6 +194,7 @@ interface Rates {
     avgBilling6Months: number;  // For Prima proportional
     billingCutoffDay: number;   // Day of the month for billing cutoff
     nightShiftStart: number;    // Hour when night shift starts (e.g., 19 for 7 PM)
+    vacationLastResetDate: string | null; // ISO date of last vacation reset
   };
 }
 
@@ -275,6 +276,7 @@ const DEFAULT_RATES: Rates = {
     avgBilling12Months: 0,
     billingCutoffDay: 29,
     nightShiftStart: 19,
+    vacationLastResetDate: null,
   }
 };
 
@@ -407,22 +409,39 @@ const calculatePeriodTotals = (
 
   // --- Proportional Calculations based on Period History ---
   const currentPeriod = periods.find(p => p.id === selectedPeriodId);
+  const currentEndDate = currentPeriod ? new Date(currentPeriod.endDate + 'T00:00:00') : new Date();
+  const currentYear = currentEndDate.getFullYear();
+  const currentMonth = currentEndDate.getMonth(); // 0-11
+  const currentSemester = currentMonth < 6 ? 0 : 1; // 0: Jan-Jun, 1: Jul-Dec
+
   const otherPeriods = periods.filter(p => p.id !== selectedPeriodId && p.endDate < (currentPeriod?.startDate || ''));
   const sortedOthers = [...otherPeriods].sort((a, b) => b.endDate.localeCompare(a.endDate));
   
-  const last5Others = sortedOthers.slice(0, 5);
-  const total6 = last5Others.reduce((sum, p) => sum + (p.totalGross || 0), 0) + gross;
-  const count6 = last5Others.length + 1;
-  const avg6 = total6 / count6;
+  // Average 6 Months (Semester Reset for Primas)
+  const semesterOthers = sortedOthers.filter(p => {
+    const pDate = new Date(p.endDate + 'T00:00:00');
+    const pSemester = pDate.getMonth() < 6 ? 0 : 1;
+    return pDate.getFullYear() === currentYear && pSemester === currentSemester;
+  });
+  const last5Others = semesterOthers.slice(0, 5);
+  const count6 = last5Others.length + (selectedPeriodId ? 1 : 0);
+  const total6 = last5Others.reduce((sum, p) => sum + (p.totalGross || 0), 0) + (selectedPeriodId ? gross : 0);
+  const avg6 = count6 > 0 ? total6 / count6 : 0;
   
   const primaProporcional = avg6 / 12;
   const cesantiasProporcional = avg6 / 12;
   const interesesCesantias = cesantiasProporcional * 0.12;
 
-  const last11Others = sortedOthers.slice(0, 11);
-  const total12 = last11Others.reduce((sum, p) => sum + (p.totalGross || 0), 0) + gross;
-  const count12 = last11Others.length + 1;
-  const avg12 = total12 / count12;
+  // Average 12 Months (Manual Reset for Vacations)
+  const vacationResetDate = rates.payroll.vacationLastResetDate;
+  const vacationOthers = sortedOthers.filter(p => {
+    if (!vacationResetDate) return true;
+    return p.startDate >= vacationResetDate;
+  });
+  const last11Others = vacationOthers.slice(0, 11);
+  const count12 = last11Others.length + (selectedPeriodId ? 1 : 0);
+  const total12 = last11Others.reduce((sum, p) => sum + (p.totalGross || 0), 0) + (selectedPeriodId ? gross : 0);
+  const avg12 = count12 > 0 ? total12 / count12 : 0;
   const vacacionesProporcional = avg12 / 24;
 
   // --- Retefuente ---
@@ -567,8 +586,8 @@ function MainApp() {
       content: "Los aportes a fondos de pensiones voluntarias o cuentas AFC no forman parte de la base gravable, siempre que no superen el 30% del ingreso laboral y no excedan las 3.800 UVT anuales."
     },
     avgBilling: {
-      title: "Promedio Facturado",
-      content: "Este valor se calcula automáticamente promediando tu 'Bruto Base' (solo turnos y recargos) de los periodos registrados. Se utiliza el promedio de 6 meses para la Prima y el de 12 meses para las Vacaciones, siguiendo el estándar legal para no calcular prestaciones sobre prestaciones."
+      title: "Promedio Facturado y Cortes",
+      content: "• Primas: Se calculan sobre el promedio del semestre actual (Ene-Jun o Jul-Dic). El promedio se reinicia automáticamente al cambiar de semestre.\n• Vacaciones: Se calculan sobre el promedio de los últimos 12 meses (o desde el último reinicio). Si ya recibiste tus vacaciones, usa el botón 'Reiniciar Ciclo' para comenzar un nuevo cálculo desde cero."
     }
   };
   const [editingPeriod, setEditingPeriod] = useState<BillingPeriod | null>(null);
@@ -2145,7 +2164,7 @@ function MainApp() {
                         <span className="text-xs font-bold text-indigo-700">{formatCurrency(results.all.retefuente)}</span>
                       </div>
                       <p className="text-[9px] text-indigo-400 italic leading-tight">
-                        Calculada sobre el Bruto Base actual aplicando tus parámetros manuales y el tope del 40%.
+                        Calculada sobre el Ingreso Salarial actual aplicando tus parámetros manuales y el tope del 40%.
                       </p>
                     </div>
                     <div className="h-px bg-slate-200 my-2" />
@@ -2159,14 +2178,47 @@ function MainApp() {
                           <Info className="w-3 h-3 text-indigo-400" />
                         </button>
                       </label>
-                      <div className="w-full bg-indigo-50 border border-indigo-100 rounded-xl py-2 px-3 text-sm font-mono text-indigo-700">
-                        {formatCurrency(results.all.avg12)}
+                      <div className="w-full bg-indigo-50 border border-indigo-100 rounded-xl py-2 px-3 text-sm font-mono text-indigo-700 flex items-center justify-between">
+                        <span>{formatCurrency(results.all.avg12)}</span>
+                        <button
+                          onClick={() => {
+                            const today = new Date().toISOString().split('T')[0];
+                            setRates({
+                              ...rates,
+                              payroll: { ...rates.payroll, vacationLastResetDate: today }
+                            });
+                            showToast("Ciclo de vacaciones reiniciado correctamente");
+                          }}
+                          className="text-[9px] bg-indigo-600 text-white px-2 py-1 rounded-lg hover:bg-indigo-700 transition-colors uppercase font-bold"
+                        >
+                          Reiniciar Ciclo
+                        </button>
                       </div>
-                      <p className="text-[9px] text-indigo-400 mt-1 italic">Calculado automáticamente del historial</p>
+                      <p className="text-[9px] text-indigo-400 mt-1 italic flex items-center justify-between">
+                        <span>
+                          {rates.payroll.vacationLastResetDate 
+                            ? `Reiniciado el: ${rates.payroll.vacationLastResetDate}` 
+                            : "Calculado automáticamente (últimos 12 meses)"}
+                        </span>
+                        {rates.payroll.vacationLastResetDate && (
+                          <button
+                            onClick={() => {
+                              setRates({
+                                ...rates,
+                                payroll: { ...rates.payroll, vacationLastResetDate: null }
+                              });
+                              showToast("Cálculo de vacaciones vuelto a automático");
+                            }}
+                            className="text-indigo-600 hover:underline font-bold"
+                          >
+                            Limpiar
+                          </button>
+                        )}
+                      </p>
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-indigo-500 uppercase mb-1 flex items-center gap-1">
-                        Promedio Facturado 6 Meses ($)
+                        Promedio Facturado 6 Meses (Semestre) ($)
                         <button 
                           onClick={() => setShowHelp(HELP_CONTENT.avgBilling)}
                           className="hover:text-indigo-600 transition-colors"
@@ -3156,11 +3208,11 @@ function MainApp() {
                   return (
                     <>
                       <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Bruto Base</p>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Ingreso Salarial</p>
                         <p className="text-xl font-bold text-slate-700">{formatCurrency(accumulated.gross)}</p>
                       </div>
                       <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100">
-                        <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-1">Total Devengado</p>
+                        <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-1">Total Ingresos + Prestaciones</p>
                         <p className="text-xl font-bold text-emerald-700">{formatCurrency(accumulated.totalGross)}</p>
                       </div>
                       <div className="p-4 bg-rose-50 rounded-2xl border border-rose-100">
@@ -3188,8 +3240,8 @@ function MainApp() {
                       <thead>
                         <tr className="bg-slate-50 border-b border-slate-100">
                           <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Periodo</th>
-                          <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Bruto Base</th>
-                          <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Devengado</th>
+                          <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Ingreso Salarial</th>
+                          <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Ingresos + Prestaciones</th>
                           <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Deducciones</th>
                           <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Neto</th>
                         </tr>
@@ -3284,7 +3336,7 @@ function MainApp() {
                       </p>
                       {p.totalGross !== undefined && (
                         <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between">
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Total Bruto</span>
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Ingreso Salarial</span>
                           <span className="text-xs font-bold text-emerald-600">{formatCurrency(p.totalGross)}</span>
                         </div>
                       )}
