@@ -494,7 +494,9 @@ const calculatePeriodTotals = (
     totalAccumulatedHours: (hoursBreakdown.day + hoursBreakdown.night + hoursBreakdown.holidayDay + hoursBreakdown.holidayNight) + 
                            (avaBreakdown.day + avaBreakdown.night + avaBreakdown.holidayDay + avaBreakdown.holidayNight),
     totalMonthlyPatients: patientsBreakdown.day + patientsBreakdown.night + patientsBreakdown.holidayDay + patientsBreakdown.holidayNight,
-    ibc
+    ibc,
+    avg6,
+    avg12
   };
 };
 
@@ -533,6 +535,42 @@ function MainApp() {
   const [activePeriod, setActivePeriod] = useState<BillingPeriod | null>(null);
   const [selectedPeriodId, setSelectedPeriodId] = useState<string | null>(null);
   const [showPeriodModal, setShowPeriodModal] = useState(false);
+  const [showHelp, setShowHelp] = useState<{ title: string, content: string } | null>(null);
+
+  const HELP_CONTENT: { [key: string]: { title: string, content: string } } = {
+    uvt: {
+      title: "Valor UVT 2026",
+      content: "La Unidad de Valor Tributario (UVT) es la medida que permite estandarizar los valores de los impuestos en Colombia. Para el año 2026, se utiliza para calcular los límites de deducciones y los rangos de la Retención en la Fuente."
+    },
+    cutoff: {
+      title: "Día de Corte",
+      content: "Es el día del mes en el que se cierra la contabilidad de tus turnos. Los registros posteriores a esta fecha se contabilizarán en el siguiente periodo de pago."
+    },
+    dependents: {
+      title: "Dependientes",
+      content: "De acuerdo con el Estatuto Tributario, puedes deducir el 10% de tus ingresos brutos (hasta un máximo de 32 UVT mensuales) si tienes personas a cargo (hijos menores, cónyuge o padres con dependencia económica)."
+    },
+    nightShift: {
+      title: "Inicio Hora Nocturna",
+      content: "En Colombia, el recargo nocturno legalmente inicia a las 9:00 PM (21:00). Sin embargo, algunos contratos o acuerdos pueden definir un inicio diferente. Este parámetro ajusta el cálculo de tus horas nocturnas."
+    },
+    prepagada: {
+      title: "Medicina Prepagada",
+      content: "Los pagos realizados a medicina prepagada o seguros de salud son deducibles de la base de Retención en la Fuente, con un límite máximo de 16 UVT mensuales."
+    },
+    interesesVivienda: {
+      title: "Intereses de Vivienda",
+      content: "Los intereses pagados por créditos hipotecarios o leasing habitacional para adquisición de vivienda son deducibles hasta un máximo de 100 UVT mensuales."
+    },
+    pensionVoluntaria: {
+      title: "Pensión Voluntaria / AFC",
+      content: "Los aportes a fondos de pensiones voluntarias o cuentas AFC no forman parte de la base gravable, siempre que no superen el 30% del ingreso laboral y no excedan las 3.800 UVT anuales."
+    },
+    avgBilling: {
+      title: "Promedio Facturado",
+      content: "Este valor se calcula automáticamente promediando tus ingresos brutos de los periodos registrados. El promedio de 6 meses se usa para la Prima de Servicios, y el de 12 meses para las Vacaciones."
+    }
+  };
   const [editingPeriod, setEditingPeriod] = useState<BillingPeriod | null>(null);
   const [newPeriodData, setNewPeriodData] = useState({
     name: '',
@@ -1950,7 +1988,12 @@ function MainApp() {
                     <div>
                       <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
                         Valor UVT 2026
-                        <span title="Unidad de Valor Tributario para el año 2026 (estimado)"><Info className="w-3 h-3 text-slate-400" /></span>
+                        <button 
+                          onClick={() => setShowHelp(HELP_CONTENT.uvt)}
+                          className="hover:text-indigo-600 transition-colors"
+                        >
+                          <Info className="w-3 h-3 text-slate-400" />
+                        </button>
                       </label>
                       <input 
                         type="number"
@@ -1966,7 +2009,12 @@ function MainApp() {
                       <div className="flex flex-col">
                         <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1">
                           Día de Corte de Facturación
-                          <span title="Día del mes en que se cierra el periodo de pago (ej: el 20 de cada mes)"><Info className="w-3 h-3 text-slate-400" /></span>
+                          <button 
+                            onClick={() => setShowHelp(HELP_CONTENT.cutoff)}
+                            className="hover:text-indigo-600 transition-colors"
+                          >
+                            <Info className="w-3 h-3 text-slate-400" />
+                          </button>
                         </label>
                         <span className="text-[10px] text-slate-400">Reinicia el periodo mensual</span>
                       </div>
@@ -1986,7 +2034,12 @@ function MainApp() {
                       <div className="flex flex-col">
                         <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1">
                           ¿Tiene Dependientes?
-                          <span title="Deducción del 10% del ingreso bruto (máx 32 UVT) por personas a cargo"><Info className="w-3 h-3 text-slate-400" /></span>
+                          <button 
+                            onClick={() => setShowHelp(HELP_CONTENT.dependents)}
+                            className="hover:text-indigo-600 transition-colors"
+                          >
+                            <Info className="w-3 h-3 text-slate-400" />
+                          </button>
                         </label>
                         <span className="text-[10px] text-slate-400">Aplica deducción del 10%</span>
                       </div>
@@ -2004,7 +2057,12 @@ function MainApp() {
                       <div className="flex flex-col">
                         <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1">
                           Inicio Hora Nocturna
-                          <span title="Hora en que comienza el recargo nocturno (ej: 19 para las 7 PM)"><Info className="w-3 h-3 text-slate-400" /></span>
+                          <button 
+                            onClick={() => setShowHelp(HELP_CONTENT.nightShift)}
+                            className="hover:text-indigo-600 transition-colors"
+                          >
+                            <Info className="w-3 h-3 text-slate-400" />
+                          </button>
                         </label>
                         <span className="text-[10px] text-slate-400">Formato 24h (ej: 19 = 7 PM)</span>
                       </div>
@@ -2023,7 +2081,12 @@ function MainApp() {
                     <div>
                       <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
                         Medicina Prepagada ($)
-                        <span title="Pagos mensuales por salud prepagada (máx 16 UVT)"><Info className="w-3 h-3 text-slate-400" /></span>
+                        <button 
+                          onClick={() => setShowHelp(HELP_CONTENT.prepagada)}
+                          className="hover:text-indigo-600 transition-colors"
+                        >
+                          <Info className="w-3 h-3 text-slate-400" />
+                        </button>
                       </label>
                       <input 
                         type="number"
@@ -2038,7 +2101,12 @@ function MainApp() {
                     <div>
                       <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
                         Intereses de Vivienda ($)
-                        <span title="Intereses pagados por crédito de vivienda o leasing habitacional (máx 100 UVT)"><Info className="w-3 h-3 text-slate-400" /></span>
+                        <button 
+                          onClick={() => setShowHelp(HELP_CONTENT.interesesVivienda)}
+                          className="hover:text-indigo-600 transition-colors"
+                        >
+                          <Info className="w-3 h-3 text-slate-400" />
+                        </button>
                       </label>
                       <input 
                         type="number"
@@ -2053,7 +2121,12 @@ function MainApp() {
                     <div>
                       <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
                         Pensión Voluntaria ($)
-                        <span title="Aportes a pensiones voluntarias o AFC (máx 30% ingreso)"><Info className="w-3 h-3 text-slate-400" /></span>
+                        <button 
+                          onClick={() => setShowHelp(HELP_CONTENT.pensionVoluntaria)}
+                          className="hover:text-indigo-600 transition-colors"
+                        >
+                          <Info className="w-3 h-3 text-slate-400" />
+                        </button>
                       </label>
                       <input 
                         type="number"
@@ -2069,32 +2142,32 @@ function MainApp() {
                     <div>
                       <label className="block text-[10px] font-bold text-indigo-500 uppercase mb-1 flex items-center gap-1">
                         Promedio Facturado 12 Meses ($)
-                        <span title="Promedio de lo facturado en los últimos 12 meses para el cálculo proporcional de vacaciones"><Info className="w-3 h-3 text-indigo-400" /></span>
+                        <button 
+                          onClick={() => setShowHelp(HELP_CONTENT.avgBilling)}
+                          className="hover:text-indigo-600 transition-colors"
+                        >
+                          <Info className="w-3 h-3 text-indigo-400" />
+                        </button>
                       </label>
-                      <input 
-                        type="number"
-                        value={rates.payroll.avgBilling12Months}
-                        onChange={(e) => setRates({
-                          ...rates,
-                          payroll: { ...rates.payroll, avgBilling12Months: Number(e.target.value) }
-                        })}
-                        className="w-full bg-white border border-indigo-100 rounded-xl py-2 px-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono"
-                      />
+                      <div className="w-full bg-indigo-50 border border-indigo-100 rounded-xl py-2 px-3 text-sm font-mono text-indigo-700">
+                        {formatCurrency(results.all.avg12)}
+                      </div>
+                      <p className="text-[9px] text-indigo-400 mt-1 italic">Calculado automáticamente del historial</p>
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-indigo-500 uppercase mb-1 flex items-center gap-1">
                         Promedio Facturado 6 Meses ($)
-                        <span title="Promedio de lo facturado en los últimos 6 meses para el cálculo proporcional de la prima (medio sueldo)"><Info className="w-3 h-3 text-indigo-400" /></span>
+                        <button 
+                          onClick={() => setShowHelp(HELP_CONTENT.avgBilling)}
+                          className="hover:text-indigo-600 transition-colors"
+                        >
+                          <Info className="w-3 h-3 text-indigo-400" />
+                        </button>
                       </label>
-                      <input 
-                        type="number"
-                        value={rates.payroll.avgBilling6Months}
-                        onChange={(e) => setRates({
-                          ...rates,
-                          payroll: { ...rates.payroll, avgBilling6Months: Number(e.target.value) }
-                        })}
-                        className="w-full bg-white border border-indigo-100 rounded-xl py-2 px-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono"
-                      />
+                      <div className="w-full bg-indigo-50 border border-indigo-100 rounded-xl py-2 px-3 text-sm font-mono text-indigo-700">
+                        {formatCurrency(results.all.avg6)}
+                      </div>
+                      <p className="text-[9px] text-indigo-400 mt-1 italic">Calculado automáticamente del historial</p>
                     </div>
                   </div>
                 </div>
@@ -3383,6 +3456,43 @@ function MainApp() {
                   className="flex-1 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200"
                 >
                   {editingPeriod ? 'Guardar Cambios' : 'Iniciar Periodo'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showHelp && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-sm rounded-[32px] shadow-2xl overflow-hidden"
+            >
+              <div className="p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-indigo-600">
+                    <Info className="w-5 h-5" />
+                    <h3 className="font-bold text-slate-900">{showHelp.title}</h3>
+                  </div>
+                  <button 
+                    onClick={() => setShowHelp(null)}
+                    className="p-2 hover:bg-slate-100 rounded-xl transition-colors text-slate-400"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <p className="text-sm text-slate-600 leading-relaxed">
+                  {showHelp.content}
+                </p>
+                <button 
+                  onClick={() => setShowHelp(null)}
+                  className="w-full py-3 bg-slate-900 text-white rounded-2xl font-bold hover:bg-slate-800 transition-all"
+                >
+                  Entendido
                 </button>
               </div>
             </motion.div>
