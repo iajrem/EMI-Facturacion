@@ -3089,23 +3089,25 @@ function MainApp() {
             <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-6">
               <p className="text-sm text-slate-500">Este resumen incluye tanto los registros definitivos como las proyecciones actuales.</p>
               
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 space-y-2">
                   <div className="flex items-center gap-2 text-slate-600">
                     <Clock className="w-4 h-4" />
                     <span className="text-[10px] font-bold uppercase tracking-widest">Horas Totales</span>
                   </div>
                   <p className="text-3xl font-bold text-slate-800">{results.all.totalAccumulatedHours}h</p>
-                  <p className="text-[10px] text-slate-400 uppercase font-bold tracking-tighter">Consulta + AVA</p>
+                  <p className="text-[10px] text-slate-400 uppercase font-bold tracking-tighter">
+                    Bruto: {formatCurrency(results.all.gross)}
+                  </p>
                 </div>
                 
-                <div className="bg-indigo-50 p-6 rounded-3xl border border-indigo-100 space-y-2">
-                  <div className="flex items-center gap-2 text-indigo-700">
-                    <TrendingUp className="w-4 h-4" />
-                    <span className="text-[10px] font-bold uppercase tracking-widest">Monto a Recibir</span>
+                <div className="bg-indigo-600 p-6 rounded-3xl text-white space-y-2 shadow-xl shadow-indigo-100">
+                  <div className="flex items-center gap-2 opacity-80">
+                    <Wallet className="w-4 h-4" />
+                    <span className="text-[10px] font-bold uppercase tracking-widest">Neto a Recibir (Caja)</span>
                   </div>
-                  <p className="text-3xl font-bold text-indigo-800">{formatCurrency(results.all.net)}</p>
-                  <p className="text-[10px] text-indigo-400 uppercase font-bold tracking-tighter">Neto Proyectado</p>
+                  <p className="text-3xl font-bold">{formatCurrency(results.all.netCash)}</p>
+                  <p className="text-[10px] opacity-70 uppercase font-bold tracking-tighter">Proyectado</p>
                 </div>
 
                 <div className="bg-rose-50 p-6 rounded-3xl border border-rose-100 space-y-2">
@@ -3115,6 +3117,17 @@ function MainApp() {
                   </div>
                   <p className="text-3xl font-bold text-rose-800">{formatCurrency(results.all.totalDeductions)}</p>
                   <p className="text-[10px] text-rose-400 uppercase font-bold tracking-tighter">Legales + Otras</p>
+                </div>
+
+                <div className="bg-emerald-50 p-6 rounded-3xl border border-emerald-100 space-y-2">
+                  <div className="flex items-center gap-2 text-emerald-700">
+                    <TrendingUp className="w-4 h-4" />
+                    <span className="text-[10px] font-bold uppercase tracking-widest">Ganancia Total Real</span>
+                  </div>
+                  <p className="text-3xl font-bold text-emerald-800">{formatCurrency(results.all.net)}</p>
+                  <p className="text-[10px] text-emerald-400 uppercase font-bold tracking-tighter italic">
+                    Incluye Prestaciones
+                  </p>
                 </div>
               </div>
             </div>
