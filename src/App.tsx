@@ -159,6 +159,16 @@ interface BillingPeriod {
   rates?: Rates;
 }
 
+interface Trisemana {
+  id: string;
+  userId: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+  maxHours: number;
+  createdAt: string;
+}
+
 interface SavedCalculation {
   id: string;
   name: string;
@@ -216,6 +226,7 @@ interface Rates {
     nightShiftStart: number;    // Hour when night shift starts (e.g., 19 for 7 PM)
     vacationLastResetDate: string | null; // ISO date of last vacation reset
     ibcMinimo: boolean;         // If true, IBC is capped at SMMLV if gross > SMMLV
+    jobTitle: string;
   };
 }
 
@@ -285,22 +296,22 @@ const DEFAULT_RATES: Rates = {
   hourly: {
     day: 23338,
     night: 31506,
-    holidayDay: 40841.5,
-    holidayNight: 48999.8,
-    extraDay: 29172.5,
-    extraNight: 40841.5,
+    holidayDay: 42008,
+    holidayNight: 50177,
+    extraDay: 29173,
+    extraNight: 40842,
     extraHolidayDay: 46676,
     extraHolidayNight: 58345,
   },
   ava: {
-    day: 35541,
-    night: 47980,
-    holidayDay: 62196.8,
-    holidayNight: 74636.1,
-    extraDay: 44426.3,
-    extraNight: 62196.8,
-    extraHolidayDay: 71082,
-    extraHolidayNight: 88852.5,
+    day: 37708,
+    night: 50906,
+    holidayDay: 67874,
+    holidayNight: 81072,
+    extraDay: 47135,
+    extraNight: 65989,
+    extraHolidayDay: 75416,
+    extraHolidayNight: 94271,
   },
   patient: {
     day: 10825,
@@ -310,8 +321,8 @@ const DEFAULT_RATES: Rates = {
   },
   surcharges: {
     night: 0.35,
-    holidayDay: 0.75,
-    holidayNight: 1.10,
+    holidayDay: 0.80,
+    holidayNight: 1.15,
     extraDay: 0.25,
     extraNight: 0.75,
     extraHolidayDay: 1.00,
@@ -329,6 +340,7 @@ const DEFAULT_RATES: Rates = {
     nightShiftStart: 19,
     vacationLastResetDate: null,
     ibcMinimo: false,
+    jobTitle: 'MEDICO CONSULTA 2 MED',
   }
 };
 
@@ -423,7 +435,9 @@ const calculatePeriodTotals = (
   rates: Rates,
   additionalDeductions: Deduction[],
   periods: BillingPeriod[],
-  selectedPeriodId: string | null
+  selectedPeriodId: string | null,
+  allRecords: ShiftRecord[] = [],
+  trisemanas: Trisemana[] = []
 ) => {
   let totalH = 0;
   let totalP = 0;
@@ -440,36 +454,61 @@ const calculatePeriodTotals = (
   const patientsBreakdown = { day: 0, night: 0, holidayDay: 0, holidayNight: 0 };
   const monthlyHours: { [key: string]: number } = {};
 
-  // Cumulative threshold logic
+  // 1. Pre-calculate distributions for all records in relevant Trisemanas
+  // This ensures cumulative hours track correctly across billing periods
+  const recordDistributions: { [recordId: string]: any } = {};
+  
+  // Find all trisemanas that could affect the current records
+  const relevantTrisemanas = trisemanas.filter(t => 
+    records.some(r => r.date >= t.startDate && r.date <= t.endDate)
+  );
+
+  relevantTrisemanas.forEach(trisemana => {
+    // Get ALL records in this trisemana across all time/periods
+    const trisemanaRecords = allRecords
+      .filter(r => r.date >= trisemana.startDate && r.date <= trisemana.endDate)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+    
+    let cumulative = 0;
+    trisemanaRecords.forEach(r => {
+      const remaining = Math.max(0, trisemana.maxHours - cumulative);
+      const dist = calculateShiftDistribution({
+        startTime: r.startTime,
+        endTime: r.endTime,
+        isHolidayStart: r.isHolidayStart || false,
+        isHolidayEnd: r.isHolidayEnd || false,
+        isExtraShift: r.isExtraShift || false
+      }, rates, remaining);
+      
+      recordDistributions[r.id] = dist;
+      // Only regular hours count towards the trisemana threshold
+      cumulative += (dist.ord.day + dist.ord.night + dist.ord.holidayDay + dist.ord.holidayNight);
+    });
+  });
+
+  // 2. Standard period threshold logic (fallback for records without Trisemana)
   const activePeriod = periods.find(p => p.id === selectedPeriodId);
-  const threshold = activePeriod?.extraThreshold || 0;
-  let cumulativeHours = 0;
+  const periodThreshold = activePeriod?.extraThreshold || 0;
+  let periodCumulativeHours = 0;
 
   // Sort records chronologically to apply threshold correctly
   const sortedRecords = [...records].sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
 
   sortedRecords.forEach(record => {
-    // Re-calculate distribution based on cumulative threshold
-    let dist;
-    if (record.isExtraShift) {
-      // Manually marked as extra - all hours are extra
-      dist = calculateShiftDistribution({ 
-        startTime: record.startTime, 
-        endTime: record.endTime, 
-        isHolidayStart: record.isHolidayStart || false, 
-        isHolidayEnd: record.isHolidayEnd || false, 
-        isExtraShift: true 
-      }, rates, 0);
-    } else {
-      const remainingToThreshold = threshold > 0 ? Math.max(0, threshold - cumulativeHours) : 999999;
+    // Use pre-calculated trisemana distribution if available
+    let dist = recordDistributions[record.id];
+    
+    if (!dist) {
+      // Fallback: Standard period threshold logic
+      const remainingToThreshold = periodThreshold > 0 ? Math.max(0, periodThreshold - periodCumulativeHours) : 999999;
       dist = calculateShiftDistribution({
         startTime: record.startTime,
         endTime: record.endTime,
         isHolidayStart: record.isHolidayStart || false,
         isHolidayEnd: record.isHolidayEnd || false,
-        isExtraShift: false
+        isExtraShift: record.isExtraShift || false
       }, rates, remainingToThreshold);
-      cumulativeHours += (dist.ord.day + dist.ord.night + dist.ord.holidayDay + dist.ord.holidayNight);
+      periodCumulativeHours += (dist.ord.day + dist.ord.night + dist.ord.holidayDay + dist.ord.holidayNight);
     }
 
     // Regular Hours (Consulta)
@@ -482,10 +521,8 @@ const calculatePeriodTotals = (
     hoursBreakdown.extraHolidayDay += dist.extra.holidayDay;
     hoursBreakdown.extraHolidayNight += dist.extra.holidayNight;
 
-    // AVA Hours - For now we assume AVA follows the same distribution if it were to have extras
-    // But usually AVA is just flat hours. However, if the user wants it to split too:
+    // AVA Hours
     if (record.isAVAShift) {
-      // If it's an AVA shift, we use the same distribution logic for AVA hours
       avaBreakdown.day += dist.ord.day;
       avaBreakdown.night += dist.ord.night;
       avaBreakdown.holidayDay += dist.ord.holidayDay;
@@ -731,11 +768,20 @@ function MainApp() {
     applyPatients: true,
   });
   const [records, setRecords] = useState<ShiftRecord[]>([]);
+  const [allRecords, setAllRecords] = useState<ShiftRecord[]>([]);
+  const [trisemanas, setTrisemanas] = useState<Trisemana[]>([]);
+  const [showTrisemanaModal, setShowTrisemanaModal] = useState(false);
   const [additionalDeductions, setAdditionalDeductions] = useState<Deduction[]>([]);
   const [periods, setPeriods] = useState<BillingPeriod[]>([]);
   const [activePeriod, setActivePeriod] = useState<BillingPeriod | null>(null);
   const [selectedPeriodId, setSelectedPeriodId] = useState<string | null>(null);
   const [showPeriodModal, setShowPeriodModal] = useState(false);
+  const [newTrisemanaData, setNewTrisemanaData] = useState({
+    name: '',
+    startDate: new Date().toISOString().split('T')[0],
+    endDate: new Date(Date.now() + 21 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+    maxHours: 120
+  });
   const [showHelp, setShowHelp] = useState<{ title: string, content: string } | null>(null);
 
   const HELP_CONTENT: { [key: string]: { title: string, content: string } } = {
@@ -924,9 +970,36 @@ function MainApp() {
       handleFirestoreError(error, OperationType.LIST, periodsPath);
     });
 
+    // Sync Trisemanas
+    const trisemanasPath = `users/${user.uid}/trisemanas`;
+    const unsubscribeTrisemanas = onSnapshot(collection(db, trisemanasPath), (snapshot) => {
+      const trisemanasData = snapshot.docs.map(doc => doc.data() as Trisemana);
+      setTrisemanas(trisemanasData.sort((a, b) => b.startDate.localeCompare(a.startDate)));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, trisemanasPath);
+    });
+
     return () => {
       unsubscribePeriods();
+      unsubscribeTrisemanas();
     };
+  }, [isAuthReady, user]);
+
+  useEffect(() => {
+    if (!isAuthReady || !user) {
+      setAllRecords([]);
+      return;
+    }
+
+    const recordsPath = `users/${user.uid}/records`;
+    const unsubscribeAllRecords = onSnapshot(collection(db, recordsPath), (snapshot) => {
+      const recordsData = snapshot.docs.map(doc => doc.data() as ShiftRecord);
+      setAllRecords(sortRecords(recordsData));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, recordsPath);
+    });
+
+    return () => unsubscribeAllRecords();
   }, [isAuthReady, user]);
 
   useEffect(() => {
@@ -936,15 +1009,8 @@ function MainApp() {
       return;
     }
 
-    const recordsPath = `users/${user.uid}/records`;
-    const unsubscribeRecords = onSnapshot(collection(db, recordsPath), (snapshot) => {
-      const recordsData = snapshot.docs
-        .map(doc => doc.data() as ShiftRecord)
-        .filter(r => r.periodId === selectedPeriodId);
-      setRecords(sortRecords(recordsData));
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, recordsPath);
-    });
+    const recordsData = allRecords.filter(r => r.periodId === selectedPeriodId);
+    setRecords(sortRecords(recordsData));
 
     const deductionsPath = `users/${user.uid}/deductions`;
     const unsubscribeDeductions = onSnapshot(collection(db, deductionsPath), (snapshot) => {
@@ -957,7 +1023,6 @@ function MainApp() {
     });
 
     return () => {
-      unsubscribeRecords();
       unsubscribeDeductions();
     };
   }, [isAuthReady, user, selectedPeriodId]);
@@ -1193,6 +1258,35 @@ function MainApp() {
       extraThreshold: period.extraThreshold || 160
     });
     setShowPeriodModal(true);
+  };
+
+  const createTrisemana = async () => {
+    if (!user) return;
+    const id = crypto.randomUUID();
+    const trisemana: Trisemana = {
+      id,
+      userId: user.uid,
+      name: newTrisemanaData.name || `Trisemana ${newTrisemanaData.startDate}`,
+      startDate: newTrisemanaData.startDate,
+      endDate: newTrisemanaData.endDate,
+      maxHours: newTrisemanaData.maxHours,
+      createdAt: new Date().toISOString()
+    };
+
+    const path = `users/${user.uid}/trisemanas/${id}`;
+    try {
+      await setDoc(doc(db, path), trisemana);
+      setShowTrisemanaModal(false);
+      setNewTrisemanaData({
+        name: '',
+        startDate: new Date().toISOString().split('T')[0],
+        endDate: new Date(Date.now() + 21 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        maxHours: 120
+      });
+      showToast("Trisemana creada con éxito.");
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, path);
+    }
   };
 
   const addRecord = async () => {
@@ -1528,7 +1622,8 @@ function MainApp() {
     doc.setTextColor(100, 116, 139); // slate-500
     doc.text(`Generado el: ${new Date().toLocaleString()}`, 14, 30);
     doc.text(`Periodo: ${periodName} (${dateRange})`, 14, 35);
-    doc.text(`Usuario: ${user?.email || 'N/A'}`, 14, 40);
+    doc.text(`Cargo: ${rates.payroll.jobTitle}`, 14, 40);
+    doc.text(`Usuario: ${user?.email || 'N/A'}`, 14, 45);
 
     // Summary Table
     const summaryData = [
@@ -1570,14 +1665,14 @@ function MainApp() {
     const recordsData = (viewingArchive ? viewingArchive.records : records).map(r => [
       r.date,
       `${r.startTime}-${r.endTime}`,
-      `${r.hours.day}/${r.hours.night}/${r.hours.holidayDay}/${r.hours.holidayNight}`,
-      `${r.ava.day}/${r.ava.night}/${r.ava.holidayDay}/${r.ava.holidayNight}`,
+      `${r.hours.day}/${r.hours.night}/${r.hours.holidayDay}/${r.hours.holidayNight}/${r.hours.extraDay}/${r.hours.extraNight}/${r.hours.extraHolidayDay}/${r.hours.extraHolidayNight}`,
+      `${r.ava.day}/${r.ava.night}/${r.ava.holidayDay}/${r.ava.holidayNight}/${r.ava.extraDay}/${r.ava.extraNight}/${r.ava.extraHolidayDay}/${r.ava.extraHolidayNight}`,
       r.applyPatients ? `${r.patients.day}/${r.patients.night}/${r.patients.holidayDay}/${r.patients.holidayNight}` : 'N/A',
     ]);
 
     (doc as any).autoTable({
       startY: 30,
-      head: [['Fecha', 'Horario', 'H. Consulta (D/N/FD/FN)', 'H. AVA (D/N/FD/FN)', 'Pacientes (D/N/FD/FN)']],
+      head: [['Fecha', 'Horario', 'H. Consulta (D/N/FD/FN/ED/EN/EFD/EFN)', 'H. AVA (D/N/FD/FN/ED/EN/EFD/EFN)', 'Pacientes (D/N/FD/FN)']],
       body: recordsData,
       theme: 'grid',
       headStyles: { fillColor: [71, 85, 105], fontSize: 8 },
@@ -1596,15 +1691,15 @@ function MainApp() {
 
     const headers = [
       'Fecha', 'Inicio', 'Fin', 'Estado',
-      'Horas Diu', 'Horas Noc', 'Horas F-Diu', 'Horas F-Noc',
-      'AVA Diu', 'AVA Noc', 'AVA F-Diu', 'AVA F-Noc',
+      'Horas Diu', 'Horas Noc', 'Horas F-Diu', 'Horas F-Noc', 'Horas E-Diu', 'Horas E-Noc', 'Horas EF-Diu', 'Horas EF-Noc',
+      'AVA Diu', 'AVA Noc', 'AVA F-Diu', 'AVA F-Noc', 'AVA E-Diu', 'AVA E-Noc', 'AVA EF-Diu', 'AVA EF-Noc',
       'Pac Diu', 'Pac Noc', 'Pac F-Diu', 'Pac F-Noc'
     ];
 
     const rows = baseRecords.map(r => [
       r.date, r.startTime, r.endTime, r.isDefinitive ? 'Definitivo' : 'Proyección',
-      r.hours.day, r.hours.night, r.hours.holidayDay, r.hours.holidayNight,
-      r.ava.day, r.ava.night, r.ava.holidayDay, r.ava.holidayNight,
+      r.hours.day, r.hours.night, r.hours.holidayDay, r.hours.holidayNight, r.hours.extraDay, r.hours.extraNight, r.hours.extraHolidayDay, r.hours.extraHolidayNight,
+      r.ava.day, r.ava.night, r.ava.holidayDay, r.ava.holidayNight, r.ava.extraDay, r.ava.extraNight, r.ava.extraHolidayDay, r.ava.extraHolidayNight,
       r.applyPatients ? r.patients.day : 0, 
       r.applyPatients ? r.patients.night : 0, 
       r.applyPatients ? r.patients.holidayDay : 0, 
@@ -1744,6 +1839,22 @@ function MainApp() {
     });
   };
 
+  const deleteTrisemana = async (id: string) => {
+    if (!user) return;
+    setConfirmDialog({
+      message: "¿Estás seguro de que deseas eliminar esta trisemana? Los cálculos de horas extra volverán a usar el límite mensual para este intervalo.",
+      onConfirm: async () => {
+        const path = `users/${user.uid}/trisemanas/${id}`;
+        try {
+          await deleteDoc(doc(db, path));
+          showToast("Trisemana eliminada correctamente");
+        } catch (error) {
+          handleFirestoreError(error, OperationType.DELETE, path);
+        }
+      }
+    });
+  };
+
   const closeArchive = () => {
     setViewingArchive(null);
     // Restore current rates and deductions from live state if needed
@@ -1838,7 +1949,9 @@ function MainApp() {
       calculationRates,
       additionalDeductions,
       periods,
-      selectedPeriodId
+      selectedPeriodId,
+      allRecords,
+      trisemanas
     );
 
     const definitiveRecords = recordsToCalculate.filter(r => r.isDefinitive);
@@ -1847,7 +1960,9 @@ function MainApp() {
       calculationRates,
       additionalDeductions,
       periods,
-      selectedPeriodId
+      selectedPeriodId,
+      allRecords,
+      trisemanas
     );
 
     return {
@@ -1855,7 +1970,7 @@ function MainApp() {
       definitive: definitiveResults,
       calculationRates
     };
-  }, [records, viewingArchive, periods, selectedPeriodId, rates, additionalDeductions, editingId, shift, quantities, user]);
+  }, [records, viewingArchive, periods, selectedPeriodId, rates, additionalDeductions, editingId, shift, quantities, user, allRecords, trisemanas]);
 
   if (!isAuthReady) {
     return (
@@ -2092,6 +2207,47 @@ function MainApp() {
               </div>
             </section>
 
+            {/* Trisemanas Section */}
+            <section className="bg-amber-50 p-4 rounded-2xl border border-amber-100">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2 text-amber-700">
+                  <Clock className="w-4 h-4" />
+                  <h2 className="text-xs font-bold uppercase tracking-widest">Trisemanas</h2>
+                </div>
+                <button 
+                  onClick={() => setShowTrisemanaModal(true)}
+                  className="p-1.5 bg-white text-amber-600 rounded-lg hover:bg-indigo-100 transition-colors shadow-sm"
+                  title="Nueva Trisemana"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              
+              <div className="space-y-2 max-h-40 overflow-y-auto pr-1 custom-scrollbar">
+                {trisemanas.length === 0 ? (
+                  <p className="text-[10px] text-amber-400 italic text-center py-2">No hay trisemanas definidas</p>
+                ) : (
+                  trisemanas.map(t => (
+                    <div key={t.id} className="p-2 bg-white border border-amber-100 rounded-xl relative group shadow-sm">
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="text-[10px] font-bold text-slate-700 truncate pr-4">{t.name}</span>
+                        <button 
+                          onClick={() => deleteTrisemana(t.id)}
+                          className="absolute top-2 right-2 p-1 text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"
+                        >
+                          <Trash2 className="w-2.5 h-2.5" />
+                        </button>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] text-slate-500">{t.startDate} al {t.endDate}</span>
+                        <span className="text-[9px] font-bold text-amber-600">{t.maxHours}h</span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+
             <section>
               <div className="flex items-center gap-2 mb-4 text-indigo-600">
                 <Settings className="w-4 h-4" />
@@ -2168,10 +2324,14 @@ function MainApp() {
                     <div className="h-px bg-slate-200 my-2" />
 
                     {[
-                      { label: 'Diurna Consulta', key: 'day' },
-                      { label: 'Nocturna Consulta', key: 'night' },
-                      { label: 'Diurna Festiva', key: 'holidayDay' },
-                      { label: 'Nocturna Festiva', key: 'holidayNight' },
+                      { label: 'Hora Diurna', key: 'day' },
+                      { label: 'Hora Nocturna', key: 'night' },
+                      { label: 'H. Festiva Diurna', key: 'holidayDay' },
+                      { label: 'H. Festiva Nocturna', key: 'holidayNight' },
+                      { label: 'Exced Diurna', key: 'extraDay' },
+                      { label: 'Exced Nocturna', key: 'extraNight' },
+                      { label: 'Extra Fest. Diurna', key: 'extraHolidayDay' },
+                      { label: 'Extra Fest. Nocturna', key: 'extraHolidayNight' },
                     ].map((item) => (
                       <div key={item.key}>
                         <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">{item.label}</label>
@@ -2235,6 +2395,10 @@ function MainApp() {
                       { label: 'AVA Nocturna', key: 'night' },
                       { label: 'AVA D-Festiva', key: 'holidayDay' },
                       { label: 'AVA N-Festiva', key: 'holidayNight' },
+                      { label: 'AVA Extra Diurna', key: 'extraDay' },
+                      { label: 'AVA Extra Nocturna', key: 'extraNight' },
+                      { label: 'AVA Extra D-Festiva', key: 'extraHolidayDay' },
+                      { label: 'AVA Extra N-Festiva', key: 'extraHolidayNight' },
                     ].map((item) => (
                       <div key={item.key}>
                         <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">{item.label}</label>
@@ -2341,6 +2505,19 @@ function MainApp() {
                 <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
                   <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Parámetros de Extracto de Pagos (Indefinido)</h3>
                   <div className="space-y-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Cargo / Título</label>
+                      <input 
+                        type="text"
+                        value={rates.payroll.jobTitle}
+                        onChange={(e) => setRates({
+                          ...rates,
+                          payroll: { ...rates.payroll, jobTitle: e.target.value }
+                        })}
+                        className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                        placeholder="Ej: MEDICO CONSULTA 2 MED"
+                      />
+                    </div>
                     <div>
                       <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
                         Valor UVT 2026
@@ -2738,6 +2915,20 @@ function MainApp() {
                     onChange={(e) => setShift({ ...shift, date: e.target.value })}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                   />
+                  {(() => {
+                    const t = trisemanas.find(tri => shift.date >= tri.startDate && shift.date <= tri.endDate);
+                    return t ? (
+                      <div className="flex items-center gap-1.5 px-2 py-1 bg-amber-50 border border-amber-100 rounded-lg">
+                        <Clock className="w-3 h-3 text-amber-600" />
+                        <span className="text-[10px] font-bold text-amber-700 uppercase truncate">{t.name}</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 px-2 py-1 bg-rose-50 border border-rose-100 rounded-lg animate-pulse">
+                        <AlertCircle className="w-3 h-3 text-rose-500" />
+                        <span className="text-[10px] font-bold text-rose-600 uppercase">Sin Trisemana</span>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <div className="space-y-2">
@@ -3063,7 +3254,14 @@ function MainApp() {
                       </div>
                       <div>
                         <h3 className="text-sm font-bold text-slate-800">Límite de Horas Ordinarias</h3>
-                        <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Define cuándo se activan los recargos por horas extra</p>
+                        <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
+                          {trisemanas.some(t => {
+                            const p = periods.find(per => per.id === selectedPeriodId);
+                            return p && ((t.startDate >= p.startDate && t.startDate <= p.endDate) || (t.endDate >= p.startDate && t.endDate <= p.endDate));
+                          }) 
+                            ? "Usando límites de Trisemana configurados" 
+                            : "Define cuándo se activan los recargos por horas extra"}
+                        </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-4">
@@ -3079,6 +3277,30 @@ function MainApp() {
                       </div>
                     </div>
                   </div>
+                  
+                  {/* Active Trisemanas in this period */}
+                  {(() => {
+                    const p = periods.find(per => per.id === selectedPeriodId);
+                    if (!p) return null;
+                    const activeTris = trisemanas.filter(t => 
+                      (t.startDate >= p.startDate && t.startDate <= p.endDate) || 
+                      (t.endDate >= p.startDate && t.endDate <= p.endDate) ||
+                      (t.startDate <= p.startDate && t.endDate >= p.endDate)
+                    );
+                    if (activeTris.length === 0) return null;
+                    return (
+                      <div className="mt-4 pt-4 border-t border-slate-100 space-y-2">
+                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Trisemanas en este periodo</p>
+                        <div className="flex flex-wrap gap-2">
+                          {activeTris.map(t => (
+                            <div key={t.id} className="px-2 py-1 bg-amber-50 border border-amber-100 rounded-lg text-[9px] font-bold text-amber-700">
+                              {t.name}: {t.maxHours}h
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
@@ -3088,9 +3310,8 @@ function MainApp() {
                       <div className="flex items-center gap-4">
                         <div>
                           <p className="text-[9px] text-slate-400 uppercase font-bold">Ordinarias</p>
-                          <p className={`text-lg font-mono font-bold ${results.all.totalRegularHours > (periods.find(p => p.id === selectedPeriodId)?.extraThreshold || 160) ? 'text-rose-500' : 'text-indigo-600'}`}>
+                          <p className="text-lg font-mono font-bold text-indigo-600">
                             {results.all.totalRegularHours.toFixed(1)}
-                            <span className="text-xs text-slate-300 ml-1">/ {periods.find(p => p.id === selectedPeriodId)?.extraThreshold || 160}</span>
                           </p>
                         </div>
                         <div className="w-px h-8 bg-slate-100" />
@@ -3109,7 +3330,10 @@ function MainApp() {
                         </div>
                       </div>
                     </div>
-                    {results.all.totalRegularHours > (periods.find(p => p.id === selectedPeriodId)?.extraThreshold || 160) && (
+                    {results.all.totalRegularHours > (periods.find(p => p.id === selectedPeriodId)?.extraThreshold || 160) && !trisemanas.some(t => {
+                      const p = periods.find(per => per.id === selectedPeriodId);
+                      return p && ((t.startDate >= p.startDate && t.startDate <= p.endDate) || (t.endDate >= p.startDate && t.endDate <= p.endDate));
+                    }) && (
                       <div className="bg-rose-50 p-3 rounded-2xl border border-rose-100 flex items-center gap-2">
                         <AlertCircle className="w-4 h-4 text-rose-500" />
                         <div className="text-[10px] text-rose-700 font-bold leading-tight">
@@ -3190,13 +3414,27 @@ function MainApp() {
                               />
                             </td>
                             <td className="p-4 text-sm font-medium text-slate-700">
-                              <div className="flex items-center gap-2">
-                                {record.date}
-                                {record.isExtraShift && (
-                                  <span className="px-1.5 py-0.5 bg-amber-100 text-amber-600 text-[8px] font-bold uppercase rounded-md border border-amber-200">
-                                    Extra
-                                  </span>
-                                )}
+                              <div className="flex flex-col gap-1">
+                                <div className="flex items-center gap-2">
+                                  {record.date}
+                                  {record.isExtraShift && (
+                                    <span className="px-1.5 py-0.5 bg-amber-100 text-amber-600 text-[8px] font-bold uppercase rounded-md border border-amber-200">
+                                      Extra
+                                    </span>
+                                  )}
+                                </div>
+                                {(() => {
+                                  const t = trisemanas.find(tri => record.date >= tri.startDate && record.date <= tri.endDate);
+                                  return t ? (
+                                    <span className="text-[9px] text-amber-600 font-bold uppercase tracking-tighter flex items-center gap-1">
+                                      <Clock className="w-2 h-2" /> {t.name}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] text-rose-500 font-bold uppercase tracking-tighter flex items-center gap-1 animate-pulse">
+                                      <AlertCircle className="w-2 h-2" /> Sin Trisemana
+                                    </span>
+                                  );
+                                })()}
                               </div>
                             </td>
                             <td className="p-4 text-xs font-mono text-slate-500">
@@ -3342,14 +3580,18 @@ function MainApp() {
                         <td className="p-4 align-top">
                           <div className="flex flex-col gap-2">
                             <div className="flex flex-col">
-                              <span className="text-xs font-mono font-black text-indigo-600">{results.all.totalMonthlyHours}h</span>
+                              <span className="text-xs font-mono font-black text-indigo-600">{results.all.totalMonthlyHours.toFixed(1)}h</span>
                               <span className="text-[9px] font-bold text-slate-400 uppercase">Horas Consulta</span>
                             </div>
                             <div className="grid grid-cols-2 gap-x-2 text-[8px] font-bold uppercase tracking-tighter">
-                              <span className="text-amber-600">D: {results.all.hoursBreakdown.day}h</span>
-                              <span className="text-indigo-600">N: {results.all.hoursBreakdown.night}h</span>
-                              <span className="text-rose-600">DF: {results.all.hoursBreakdown.holidayDay}h</span>
-                              <span className="text-purple-600">NF: {results.all.hoursBreakdown.holidayNight}h</span>
+                              <span className="text-amber-600">D: {results.all.hoursBreakdown.day.toFixed(1)}h</span>
+                              <span className="text-indigo-600">N: {results.all.hoursBreakdown.night.toFixed(1)}h</span>
+                              <span className="text-rose-600">DF: {results.all.hoursBreakdown.holidayDay.toFixed(1)}h</span>
+                              <span className="text-purple-600">NF: {results.all.hoursBreakdown.holidayNight.toFixed(1)}h</span>
+                              <span className="text-amber-700">ED: {results.all.hoursBreakdown.extraDay.toFixed(1)}h</span>
+                              <span className="text-indigo-700">EN: {results.all.hoursBreakdown.extraNight.toFixed(1)}h</span>
+                              <span className="text-rose-700">EFD: {results.all.hoursBreakdown.extraHolidayDay.toFixed(1)}h</span>
+                              <span className="text-purple-700">EFN: {results.all.hoursBreakdown.extraHolidayNight.toFixed(1)}h</span>
                             </div>
                             <div className="pt-1 border-t border-slate-200">
                               <span className="text-[9px] font-bold text-slate-600">{formatCurrency(results.all.totalH)}</span>
@@ -3359,14 +3601,18 @@ function MainApp() {
                         <td className="p-4 align-top">
                           <div className="flex flex-col gap-2">
                             <div className="flex flex-col">
-                              <span className="text-xs font-mono font-black text-violet-600">{results.all.totalMonthlyAVA}h</span>
+                              <span className="text-xs font-mono font-black text-violet-600">{results.all.totalMonthlyAVA.toFixed(1)}h</span>
                               <span className="text-[9px] font-bold text-slate-400 uppercase">Horas AVA</span>
                             </div>
                             <div className="grid grid-cols-2 gap-x-2 text-[8px] font-bold uppercase tracking-tighter">
-                              <span className="text-amber-600">D: {results.all.avaBreakdown.day}h</span>
-                              <span className="text-indigo-600">N: {results.all.avaBreakdown.night}h</span>
-                              <span className="text-rose-600">DF: {results.all.avaBreakdown.holidayDay}h</span>
-                              <span className="text-purple-600">NF: {results.all.avaBreakdown.holidayNight}h</span>
+                              <span className="text-amber-600">D: {results.all.avaBreakdown.day.toFixed(1)}h</span>
+                              <span className="text-indigo-600">N: {results.all.avaBreakdown.night.toFixed(1)}h</span>
+                              <span className="text-rose-600">DF: {results.all.avaBreakdown.holidayDay.toFixed(1)}h</span>
+                              <span className="text-purple-600">NF: {results.all.avaBreakdown.holidayNight.toFixed(1)}h</span>
+                              <span className="text-amber-700">ED: {results.all.avaBreakdown.extraDay.toFixed(1)}h</span>
+                              <span className="text-indigo-700">EN: {results.all.avaBreakdown.extraNight.toFixed(1)}h</span>
+                              <span className="text-rose-700">EFD: {results.all.avaBreakdown.extraHolidayDay.toFixed(1)}h</span>
+                              <span className="text-purple-700">EFN: {results.all.avaBreakdown.extraHolidayNight.toFixed(1)}h</span>
                             </div>
                             <div className="pt-1 border-t border-slate-200">
                               <span className="text-[9px] font-bold text-slate-600">{formatCurrency(results.all.totalAVA)}</span>
@@ -3413,6 +3659,10 @@ function MainApp() {
                                     <span>N: {formatCurrency(results.all.hoursValues.night)}</span>
                                     <span>DF: {formatCurrency(results.all.hoursValues.holidayDay)}</span>
                                     <span>NF: {formatCurrency(results.all.hoursValues.holidayNight)}</span>
+                                    <span>ED: {formatCurrency(results.all.hoursValues.extraDay)}</span>
+                                    <span>EN: {formatCurrency(results.all.hoursValues.extraNight)}</span>
+                                    <span>EFD: {formatCurrency(results.all.hoursValues.extraHolidayDay)}</span>
+                                    <span>EFN: {formatCurrency(results.all.hoursValues.extraHolidayNight)}</span>
                                   </div>
                                 </div>
                                 <div className="flex flex-col border-b border-indigo-100 pb-1">
@@ -3422,6 +3672,10 @@ function MainApp() {
                                     <span>N: {formatCurrency(results.all.avaValues.night)}</span>
                                     <span>DF: {formatCurrency(results.all.avaValues.holidayDay)}</span>
                                     <span>NF: {formatCurrency(results.all.avaValues.holidayNight)}</span>
+                                    <span>ED: {formatCurrency(results.all.avaValues.extraDay)}</span>
+                                    <span>EN: {formatCurrency(results.all.avaValues.extraNight)}</span>
+                                    <span>EFD: {formatCurrency(results.all.avaValues.extraHolidayDay)}</span>
+                                    <span>EFN: {formatCurrency(results.all.avaValues.extraHolidayNight)}</span>
                                   </div>
                                 </div>
                                 <div className="flex flex-col">
@@ -4136,6 +4390,94 @@ function MainApp() {
           </div>
         )}
       </AnimatePresence>
+
+      <AnimatePresence>
+        {showTrisemanaModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden"
+            >
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-amber-600 text-white">
+                <div className="flex items-center gap-3">
+                  <Clock className="w-5 h-5" />
+                  <h3 className="font-bold">Nueva Trisemana</h3>
+                </div>
+                <button 
+                  onClick={() => setShowTrisemanaModal(false)} 
+                  className="p-1 hover:bg-white/20 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              
+              <div className="p-6 space-y-6">
+                <p className="text-sm text-slate-500 leading-relaxed">
+                  Define un intervalo de 3 semanas y su tope de horas. Las horas que excedan este tope se calcularán con recargos de horas extra.
+                </p>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1.5 tracking-wider">Nombre (Opcional)</label>
+                    <input 
+                      type="text"
+                      placeholder="Ej: Trisemana Abril A"
+                      value={newTrisemanaData.name}
+                      onChange={(e) => setNewTrisemanaData({ ...newTrisemanaData, name: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-amber-500 outline-none transition-all"
+                    />
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1.5 tracking-wider">Fecha Inicio</label>
+                      <input 
+                        type="date"
+                        value={newTrisemanaData.startDate}
+                        onChange={(e) => setNewTrisemanaData({ ...newTrisemanaData, startDate: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-amber-500 outline-none transition-all"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1.5 tracking-wider">Fecha Fin</label>
+                      <input 
+                        type="date"
+                        value={newTrisemanaData.endDate}
+                        onChange={(e) => setNewTrisemanaData({ ...newTrisemanaData, endDate: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-amber-500 outline-none transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1.5 tracking-wider">Tope de Horas (Trisemana)</label>
+                    <div className="relative">
+                      <input 
+                        type="number"
+                        value={newTrisemanaData.maxHours}
+                        onChange={(e) => setNewTrisemanaData({ ...newTrisemanaData, maxHours: Number(e.target.value) })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-amber-500 outline-none transition-all font-mono"
+                      />
+                      <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400 uppercase">Horas</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <button 
+                  onClick={createTrisemana}
+                  className="w-full py-4 bg-amber-600 text-white font-bold rounded-2xl hover:bg-amber-700 transition-all shadow-lg shadow-amber-200 flex items-center justify-center gap-2"
+                >
+                  <CheckCircle2 className="w-5 h-5" />
+                  Crear Trisemana
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {showPeriodModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
