@@ -142,6 +142,7 @@ interface Deduction {
   concept: string;
   amount: number;
   periodId?: string;
+  applied?: boolean;
 }
 
 interface BillingPeriod {
@@ -309,6 +310,17 @@ interface ShiftRecord {
 
 const SMMLV_2026 = 1750905;
 
+// Recargos de Ley Colombia 2026 (No modificables)
+const SURCHARGES_2026 = {
+  night: 0.35,              // Recargo Nocturno (35%)
+  holidayDay: 0.75,         // Recargo Dominical/Festivo Diurno (75%)
+  holidayNight: 1.10,       // Recargo Dominical/Festivo Nocturno (75% + 35% = 110%)
+  extraDay: 0.25,           // Extra Diurna (25%)
+  extraNight: 0.75,         // Extra Nocturna (75%)
+  extraHolidayDay: 1.00,    // Extra Festiva Diurna (100%)
+  extraHolidayNight: 1.50   // Extra Festiva Nocturna (150%)
+};
+
 const DEFAULT_RATES: Rates = {
   base: {
     consultation: 23338,
@@ -316,34 +328,26 @@ const DEFAULT_RATES: Rates = {
     ava: 37709,
     virtual: 37709,
   },
-  surcharges: {
-    night: 0.35,
-    holidayDay: 0.80,
-    holidayNight: 1.15,
-    extraDay: 0.25,
-    extraNight: 0.75,
-    extraHolidayDay: 0.25,
-    extraHolidayNight: 0.75
-  },
+  surcharges: { ...SURCHARGES_2026 },
   hourly: {
     day: 23338,
     night: 31506,
-    holidayDay: 42008,
-    holidayNight: 50177,
+    holidayDay: 40842,
+    holidayNight: 49010,
     extraDay: 29173,
     extraNight: 40842,
     extraHolidayDay: 46676,
     extraHolidayNight: 58345,
   },
   ava: {
-    day: 37708,
-    night: 50906,
-    holidayDay: 67874,
-    holidayNight: 81072,
-    extraDay: 47135,
-    extraNight: 65989,
-    extraHolidayDay: 75416,
-    extraHolidayNight: 94271,
+    day: 37709,
+    night: 50907,
+    holidayDay: 65991,
+    holidayNight: 79189,
+    extraDay: 47136,
+    extraNight: 65991,
+    extraHolidayDay: 75418,
+    extraHolidayNight: 94273,
   },
   patient: {
     day: 10825,
@@ -359,7 +363,7 @@ const DEFAULT_RATES: Rates = {
     interesesVivienda: 0,
     avgBilling12Months: 0,
     avgBilling6Months: 0,
-    billingCutoffDay: 25,
+    billingCutoffDay: 29,
     nightShiftStart: 19,
     vacationLastResetDate: null,
     ibcMinimo: false,
@@ -701,10 +705,10 @@ const calculatePeriodTotals = (
     night: hoursBreakdown.night * rates.base.consultation * (1 + rates.surcharges.night),
     holidayDay: hoursBreakdown.holidayDay * rates.base.consultation * (1 + rates.surcharges.holidayDay),
     holidayNight: hoursBreakdown.holidayNight * rates.base.consultation * (1 + rates.surcharges.holidayNight),
-    extraDay: hoursBreakdown.extraDay * rates.base.consultation * rates.surcharges.extraDay,
-    extraNight: hoursBreakdown.extraNight * rates.base.consultation * rates.surcharges.extraNight,
-    extraHolidayDay: hoursBreakdown.extraHolidayDay * rates.base.consultation * rates.surcharges.extraDay,
-    extraHolidayNight: hoursBreakdown.extraHolidayNight * rates.base.consultation * rates.surcharges.extraNight,
+    extraDay: hoursBreakdown.extraDay * rates.base.consultation * (1 + rates.surcharges.extraDay),
+    extraNight: hoursBreakdown.extraNight * rates.base.consultation * (1 + rates.surcharges.extraNight),
+    extraHolidayDay: hoursBreakdown.extraHolidayDay * rates.base.consultation * (1 + rates.surcharges.extraHolidayDay),
+    extraHolidayNight: hoursBreakdown.extraHolidayNight * rates.base.consultation * (1 + rates.surcharges.extraHolidayNight),
   };
 
   const avaVirtualValues = {
@@ -712,10 +716,10 @@ const calculatePeriodTotals = (
     night: avaVirtualBreakdown.night * rates.base.ava * (1 + rates.surcharges.night),
     holidayDay: avaVirtualBreakdown.holidayDay * rates.base.ava * (1 + rates.surcharges.holidayDay),
     holidayNight: avaVirtualBreakdown.holidayNight * rates.base.ava * (1 + rates.surcharges.holidayNight),
-    extraDay: avaVirtualBreakdown.extraDay * rates.base.ava * rates.surcharges.extraDay,
-    extraNight: avaVirtualBreakdown.extraNight * rates.base.ava * rates.surcharges.extraNight,
-    extraHolidayDay: avaVirtualBreakdown.extraHolidayDay * rates.base.ava * rates.surcharges.extraDay,
-    extraHolidayNight: avaVirtualBreakdown.extraHolidayNight * rates.base.ava * rates.surcharges.extraNight,
+    extraDay: avaVirtualBreakdown.extraDay * rates.base.ava * (1 + rates.surcharges.extraDay),
+    extraNight: avaVirtualBreakdown.extraNight * rates.base.ava * (1 + rates.surcharges.extraNight),
+    extraHolidayDay: avaVirtualBreakdown.extraHolidayDay * rates.base.ava * (1 + rates.surcharges.extraHolidayDay),
+    extraHolidayNight: avaVirtualBreakdown.extraHolidayNight * rates.base.ava * (1 + rates.surcharges.extraHolidayNight),
   };
 
   const patientsValues = {
@@ -757,7 +761,10 @@ const calculatePeriodTotals = (
     else fsp = ibc * 0.02;
   }
 
-  const sumAdditionalDeductions = additionalDeductions.reduce((sum, d) => sum + d.amount, 0);
+  const sumAdditionalDeductions = additionalDeductions
+    .filter(d => d.applied !== false)
+    .reduce((sum, d) => sum + d.amount, 0);
+  
   const legalDeductions = health + pension + fsp; // ARL is paid by employer in Colombia for employees
 
   // --- Proportional Calculations based on Period History ---
@@ -1161,7 +1168,9 @@ function MainApp() {
       threshold = trisemana.maxHours;
       // Calculate cumulative hours in this trisemana before this shift
       const previousInTri = allRecords
-        .filter(r => r.date >= trisemana.startDate && r.date <= trisemana.endDate && (r.date < shift.date || (r.date === shift.date && r.startTime < shift.startTime)))
+        .filter(r => r.id !== editingId) // Exclude current record being edited
+        .filter(r => (r.trisemanaId === trisemana.id) || (!r.trisemanaId && r.date >= trisemana.startDate && r.date <= trisemana.endDate))
+        .filter(r => r.date < shift.date || (r.date === shift.date && r.startTime < shift.startTime))
         .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
       
       let triCumulative = 0;
@@ -1183,6 +1192,7 @@ function MainApp() {
       
       // Calculate cumulative hours in current period before this shift
       const previousInPeriod = records
+        .filter(r => r.id !== editingId) // Exclude current record being edited
         .filter(r => r.date < shift.date || (r.date === shift.date && r.startTime < shift.startTime))
         .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
       
@@ -1358,6 +1368,46 @@ function MainApp() {
     }
   };
 
+  const openNewPeriodModal = () => {
+    setEditingPeriod(null);
+    
+    let suggestedStart = new Date().toISOString().split('T')[0];
+    if (periods.length > 0) {
+      const lastPeriod = periods[0]; // descending order
+      const lastEnd = new Date(lastPeriod.endDate + 'T12:00:00');
+      const nextDay = new Date(lastEnd);
+      nextDay.setDate(lastEnd.getDate() + 1);
+      suggestedStart = nextDay.toISOString().split('T')[0];
+    }
+    
+    // Calculate suggested end date based on cutoff
+    const startDateObj = new Date(suggestedStart + 'T12:00:00');
+    let targetYear = startDateObj.getFullYear();
+    let targetMonth = startDateObj.getMonth();
+    let cutoff = rates.payroll.billingCutoffDay;
+    if (targetMonth === 1) cutoff = Math.min(cutoff, 27);
+    
+    let suggestedEndObj = new Date(targetYear, targetMonth, cutoff);
+    if (suggestedEndObj <= startDateObj) {
+      targetMonth++;
+      if (targetMonth > 11) {
+        targetMonth = 0;
+        targetYear++;
+      }
+      cutoff = rates.payroll.billingCutoffDay;
+      if (targetMonth === 1) cutoff = Math.min(cutoff, 27);
+      suggestedEndObj = new Date(targetYear, targetMonth, cutoff);
+    }
+
+    setNewPeriodData({
+      name: '',
+      startDate: suggestedStart,
+      endDate: suggestedEndObj.toISOString().split('T')[0],
+      extraThreshold: 132
+    });
+    setShowPeriodModal(true);
+  };
+
   const openEditPeriod = (period: BillingPeriod) => {
     setEditingPeriod(period);
     setNewPeriodData({
@@ -1412,7 +1462,7 @@ function MainApp() {
     if (!user) return;
     if (!selectedPeriodId) {
       showToast('Por favor, inicia un periodo de facturación primero.', 'error');
-      setShowPeriodModal(true);
+      openNewPeriodModal();
       return;
     }
 
@@ -2024,6 +2074,7 @@ function MainApp() {
       userId: user.uid,
       concept: 'Nueva deducción',
       amount: 0,
+      applied: true,
       periodId: selectedPeriodId
     };
     const path = `users/${user.uid}/deductions/${deductionId}`;
@@ -2035,7 +2086,7 @@ function MainApp() {
     }
   };
 
-  const updateDeduction = async (id: string, field: 'concept' | 'amount', value: string | number) => {
+  const updateDeduction = async (id: string, field: 'concept' | 'amount' | 'applied', value: string | number | boolean) => {
     if (!user) return;
     const path = `users/${user.uid}/deductions/${id}`;
     try {
@@ -2059,7 +2110,11 @@ function MainApp() {
   const results = useMemo(() => {
     const baseRecords = viewingArchive ? viewingArchive.records : records;
     const currentPeriod = periods.find(p => p.id === selectedPeriodId);
-    const calculationRates = viewingArchive ? viewingArchive.rates : (currentPeriod?.rates || rates);
+    
+    // Always use fixed legal surcharges for calculations in 2026
+    const calculationRates = viewingArchive 
+      ? { ...viewingArchive.rates, surcharges: { ...SURCHARGES_2026 } } 
+      : { ...((currentPeriod?.rates || rates)), surcharges: { ...SURCHARGES_2026 } };
 
     let recordsToCalculate = [...baseRecords];
     let allRecordsToCalculate = [...allRecords];
@@ -2277,7 +2332,7 @@ function MainApp() {
                   <h2 className="text-xs font-bold uppercase tracking-widest">Periodos</h2>
                 </div>
                 <button 
-                  onClick={() => setShowPeriodModal(true)}
+                  onClick={openNewPeriodModal}
                   className="p-1.5 bg-white text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors shadow-sm"
                   title="Nuevo Periodo"
                 >
@@ -2313,13 +2368,13 @@ function MainApp() {
                       <div className="text-[9px] text-slate-500 font-medium">{activePeriod.startDate} al {activePeriod.endDate}</div>
                     </div>
                   ) : (
-                    <button 
-                      onClick={() => setShowPeriodModal(true)}
-                      className="w-full py-3 bg-white border border-dashed border-indigo-200 text-indigo-600 text-xs font-bold rounded-xl hover:bg-indigo-100 transition-all flex items-center justify-center gap-2"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      Iniciar Periodo
-                    </button>
+                   <button 
+                     onClick={openNewPeriodModal}
+                     className="w-full py-3 bg-white border border-dashed border-indigo-200 text-indigo-600 text-xs font-bold rounded-xl hover:bg-indigo-100 transition-all flex items-center justify-center gap-2"
+                   >
+                     <Plus className="w-3.5 h-3.5" />
+                     Iniciar Periodo
+                   </button>
                   )}
                 </div>
 
@@ -2452,61 +2507,31 @@ function MainApp() {
 
               <div className="space-y-6">
                 <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Porcentajes de Recargo (%)</h3>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Recargos de Ley (Colombia 2026)</h3>
+                    <span className="px-2 py-1 bg-emerald-100 text-emerald-700 text-[8px] font-black uppercase rounded-lg border border-emerald-200">
+                      Fijos No Modificables
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 pb-2">
                     {[
-                      { label: 'Nocturno', key: 'night' },
-                      { label: 'Festivo Diurno', key: 'holidayDay' },
-                      { label: 'Festivo Nocturno', key: 'holidayNight' },
-                      { label: 'Extra Diurno', key: 'extraDay' },
-                      { label: 'Extra Nocturno', key: 'extraNight' },
+                      { label: 'Nocturno', val: '35%' },
+                      { label: 'Festivo Diurno', val: '75%' },
+                      { label: 'Festivo Nocturno', val: '110%' },
+                      { label: 'Extra Diurno', val: '25%' },
+                      { label: 'Extra Nocturno', val: '75%' },
+                      { label: 'Extra Festivo D', val: '100%' },
+                      { label: 'Extra Festivo N', val: '150%' },
                     ].map((item) => (
-                      <div key={item.key}>
-                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">{item.label}</label>
-                        <div className="relative">
-                          <input 
-                            type="number"
-                            step="0.01"
-                            value={rates.surcharges[item.key as keyof Rates['surcharges']]}
-                            onChange={(e) => {
-                              const val = Number(e.target.value);
-                              const newSurcharges = { ...rates.surcharges, [item.key]: val };
-                              
-                              // Recalculate all derived rates
-                              const b = rates.base;
-                              const s = newSurcharges;
-                              
-                              const updateH = (base: number) => ({
-                                day: base,
-                                night: Number((base * (1 + s.night)).toFixed(2)),
-                                holidayDay: Number((base * (1 + s.holidayDay)).toFixed(2)),
-                                holidayNight: Number((base * (1 + s.holidayNight)).toFixed(2)),
-                                extraDay: Number((base * (1 + s.extraDay)).toFixed(2)),
-                                extraNight: Number((base * (1 + s.extraNight)).toFixed(2)),
-                                extraHolidayDay: Number((base * (1 + s.extraDay)).toFixed(2)),
-                                extraHolidayNight: Number((base * (1 + s.extraNight)).toFixed(2)),
-                              });
-
-                              setRates({
-                                ...rates,
-                                surcharges: newSurcharges,
-                                hourly: updateH(b.consultation),
-                                ava: updateH(b.ava),
-                                patient: {
-                                  day: b.service,
-                                  night: Number((b.service * (1 + s.night)).toFixed(2)),
-                                  holidayDay: Number((b.service * (1 + s.holidayDay)).toFixed(2)),
-                                  holidayNight: Number((b.service * (1 + s.holidayNight)).toFixed(2)),
-                                }
-                              });
-                            }}
-                            className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-mono"
-                          />
-                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs">%</span>
-                        </div>
+                      <div key={item.label} className="p-2 bg-white rounded-xl border border-slate-100 shadow-sm flex flex-col items-center">
+                        <span className="text-[8px] font-bold text-slate-400 uppercase">{item.label}</span>
+                        <span className="text-xs font-black text-slate-800">{item.val}</span>
                       </div>
                     ))}
                   </div>
+                  <p className="text-[9px] text-slate-400 italic mt-2 text-center">
+                    Tarifas calculadas automáticamente según la ley vigente.
+                  </p>
                 </div>
 
                 <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
@@ -2742,36 +2767,66 @@ function MainApp() {
                       <p className="text-[10px] text-slate-400 italic text-center py-2">No hay deducciones adicionales registradas</p>
                     ) : (
                       additionalDeductions.map((deduction) => (
-                        <div key={deduction.id} className="p-3 bg-white border border-slate-200 rounded-xl space-y-2 relative group">
+                        <div 
+                          key={deduction.id} 
+                          className={`p-3 border rounded-xl space-y-2 relative group transition-all ${
+                            deduction.applied !== false ? 'bg-white border-slate-200 shadow-sm' : 'bg-slate-50 border-slate-100 opacity-60'
+                          }`}
+                        >
                           <button 
                             onClick={() => removeDeduction(deduction.id)}
-                            className="absolute -top-2 -right-2 w-5 h-5 bg-rose-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-sm"
+                            className="absolute -top-2 -right-2 w-5 h-5 bg-rose-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-sm z-10"
                           >
                             <X className="w-3 h-3" />
                           </button>
                           
-                          <div>
-                            <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Concepto</label>
-                            <input 
-                              type="text"
-                              value={deduction.concept}
-                              onChange={(e) => updateDeduction(deduction.id, 'concept', e.target.value)}
-                              placeholder="Ej: Cooperativa"
-                              className="w-full bg-slate-50 border border-slate-100 rounded-lg py-1.5 px-3 text-xs focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                            />
-                          </div>
-                          
-                          <div>
-                            <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Monto</label>
-                            <div className="relative">
-                              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-[10px]">$</span>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex-1">
+                              <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Concepto</label>
                               <input 
-                                type="number"
-                                value={deduction.amount}
-                                onChange={(e) => updateDeduction(deduction.id, 'amount', Number(e.target.value))}
-                                className="w-full bg-slate-50 border border-slate-100 rounded-lg py-1.5 pl-5 pr-3 text-xs focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono"
+                                type="text"
+                                value={deduction.concept}
+                                onChange={(e) => updateDeduction(deduction.id, 'concept', e.target.value)}
+                                placeholder="Ej: Cooperativa"
+                                className="w-full bg-slate-50 border border-slate-100 rounded-lg py-1 px-3 text-xs focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                               />
                             </div>
+                            <div className="flex flex-col items-center justify-center pt-4">
+                              <div className="relative inline-flex items-center cursor-pointer">
+                                <input 
+                                  type="checkbox" 
+                                  checked={deduction.applied !== false} 
+                                  onChange={(e) => updateDeduction(deduction.id, 'applied', e.target.checked)}
+                                  className="sr-only peer"
+                                />
+                                <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-500"></div>
+                              </div>
+                              <span className="text-[8px] font-bold text-slate-400 uppercase mt-1">
+                                {deduction.applied !== false ? 'Activo' : 'Inactivo'}
+                              </span>
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-end gap-3">
+                            <div className="flex-1">
+                              <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Monto ($)</label>
+                              <div className="relative">
+                                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-[10px]">$</span>
+                                <input 
+                                  type="number"
+                                  value={deduction.amount}
+                                  onChange={(e) => updateDeduction(deduction.id, 'amount', Number(e.target.value))}
+                                  className="w-full bg-slate-50 border border-slate-100 rounded-lg py-1 pl-5 pr-3 text-xs focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono"
+                                />
+                              </div>
+                            </div>
+                            {results.definitive.gross > 0 && deduction.applied !== false && (
+                              <div className="flex flex-col items-end pb-1">
+                                <span className="text-[9px] font-bold text-rose-500 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100">
+                                  - {((deduction.amount / results.definitive.gross) * 100).toFixed(1)}%
+                                </span>
+                              </div>
+                            )}
                           </div>
                         </div>
                       ))
@@ -3140,7 +3195,7 @@ function MainApp() {
 
                 {periods.find(p => p.id === selectedPeriodId)?.status === 'active' ? (
                   <button 
-                    onClick={() => setShowPeriodModal(true)}
+                    onClick={() => openEditPeriod(periods.find(p => p.id === selectedPeriodId)!)}
                     className="px-5 py-2.5 bg-slate-800 text-white text-xs font-bold rounded-xl hover:bg-slate-700 transition-all flex items-center gap-2 shadow-md"
                   >
                     <Archive className="w-4 h-4" />
@@ -4773,7 +4828,7 @@ function MainApp() {
                   <button 
                     onClick={() => {
                       setShowPeriodSelectionModal(false);
-                      setShowPeriodModal(true);
+                      openNewPeriodModal();
                     }}
                     className="w-full p-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all flex items-center justify-between group"
                   >
