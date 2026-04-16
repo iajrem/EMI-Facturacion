@@ -171,6 +171,7 @@ interface Trisemana {
   startDate: string;
   endDate: string;
   maxHours: number;
+  status: 'active' | 'archived';
   createdAt: string;
 }
 
@@ -250,6 +251,7 @@ interface ShiftInput {
   isAVAShift: boolean;
   isVirtualShift: boolean;
   isExtraShift: boolean;
+  extraHoursType: 'consultation' | 'avaVirtual';
 }
 
 interface Quantities {
@@ -299,6 +301,7 @@ interface ShiftRecord {
   isHolidayEnd: boolean;
   isAVAShift: boolean;
   isVirtualShift: boolean;
+  extraHoursType?: 'consultation' | 'avaVirtual';
 }
 
 // --- Constants ---
@@ -398,47 +401,57 @@ interface ShiftDistribution {
 const calculateShiftValue = (record: ShiftRecord, rates: Rates, dist: ShiftDistribution) => {
   if (!dist) return { base: 0, service: 0, extraSurcharge: 0, avaVirtual: 0 };
 
-  const s = rates.surcharges;
-  const b = rates.base;
+  const h = rates.hourly;
+  const a = rates.ava;
+  const p = rates.patient;
 
-  const calc = (d: any, baseRate: number, isConsultation: boolean) => {
-    // 1. Base + Night/Holiday for ALL hours (Ordinary + Extra)
-    const allDay = d.ord.day + d.extra.day;
-    const allNight = d.ord.night + d.extra.night;
-    const allHolidayDay = d.ord.holidayDay + d.extra.holidayDay;
-    const allHolidayNight = d.ord.holidayNight + d.extra.holidayNight;
-
-    const basePart = (allDay * baseRate) + 
-                     (allNight * baseRate * (1 + s.night)) + 
-                     (allHolidayDay * baseRate * (1 + s.holidayDay)) + 
-                     (allHolidayNight * baseRate * (1 + s.holidayNight));
-
-    // 2. Service part (only for Consultation and only for Ordinary hours)
-    let servicePart = 0;
-    if (isConsultation) {
-      servicePart = (d.ord.day * b.service) + 
-                    (d.ord.night * b.service * (1 + s.night)) + 
-                    (d.ord.holidayDay * b.service * (1 + s.holidayDay)) + 
-                    (d.ord.holidayNight * b.service * (1 + s.holidayNight));
-    }
-
-    // 3. Extra Surcharge (only for Extra hours, applied to Base rate)
-    const extraPart = (d.extra.day * baseRate * s.extraDay) + 
-                      (d.extra.night * baseRate * s.extraNight) + 
-                      (d.extra.holidayDay * baseRate * s.extraHolidayDay) + 
-                      (d.extra.holidayNight * baseRate * s.extraHolidayNight);
-
-    return { basePart, servicePart, extraPart };
-  };
+  // 1. Calculate Ordinary Part
+  let ordBasePart = 0;
+  let ordServicePart = 0;
+  let ordAVAPart = 0;
 
   if (record.isAVAShift || record.isVirtualShift) {
-    const baseRate = record.isAVAShift ? b.ava : b.virtual;
-    const v = calc(dist, baseRate, false);
-    return { base: 0, service: 0, extraSurcharge: 0, avaVirtual: v.basePart + v.extraPart };
+    ordAVAPart = (dist.ord.day * a.day) + 
+                 (dist.ord.night * a.night) + 
+                 (dist.ord.holidayDay * a.holidayDay) + 
+                 (dist.ord.holidayNight * a.holidayNight);
   } else {
-    const v = calc(dist, b.consultation, true);
-    return { base: v.basePart, service: v.servicePart, extraSurcharge: v.extraPart, avaVirtual: 0 };
+    ordBasePart = (dist.ord.day * h.day) + 
+                  (dist.ord.night * h.night) + 
+                  (dist.ord.holidayDay * h.holidayDay) + 
+                  (dist.ord.holidayNight * h.holidayNight);
+    
+    ordServicePart = (dist.ord.day * p.day) + 
+                     (dist.ord.night * p.night) + 
+                     (dist.ord.holidayDay * p.holidayDay) + 
+                     (dist.ord.holidayNight * p.holidayNight);
   }
+
+  // 2. Calculate Extra Part
+  let extraBasePart = 0;
+  let extraSurchargePart = 0;
+  let extraAVAPart = 0;
+
+  const extraType = record.extraHoursType || (record.isAVAShift ? 'avaVirtual' : 'consultation');
+
+  if (extraType === 'avaVirtual') {
+    extraAVAPart = (dist.extra.day * a.extraDay) + 
+                   (dist.extra.night * a.extraNight) + 
+                   (dist.extra.holidayDay * a.extraHolidayDay) + 
+                   (dist.extra.holidayNight * a.extraHolidayNight);
+  } else {
+    extraBasePart = (dist.extra.day * h.extraDay) + 
+                    (dist.extra.night * h.extraNight) + 
+                    (dist.extra.holidayDay * h.extraHolidayDay) + 
+                    (dist.extra.holidayNight * h.extraHolidayNight);
+  }
+
+  return { 
+    base: ordBasePart + extraBasePart, 
+    service: ordServicePart, 
+    extraSurcharge: extraSurchargePart, // This is now included in the extra rates
+    avaVirtual: ordAVAPart + extraAVAPart 
+  };
 };
 
 // --- Pure Calculation Logic (Correction 2 & 4) ---
@@ -612,34 +625,48 @@ const calculatePeriodTotals = (
         isExtraShift: record.isExtraShift || false
       }, rates, remainingToThreshold);
       periodCumulativeHours += (dist.ord.day + dist.ord.night + dist.ord.holidayDay + dist.ord.holidayNight);
+      
+      // Store it so it's available for the UI
+      recordDistributions[record.id] = dist;
     }
+
+    const isAVAMain = record.isAVAShift || record.isVirtualShift || (Object.values(record.ava || {}).some(v => v > 0) && Object.values(record.hours || {}).every(v => v === 0));
 
     // Regular Hours (Consulta)
     hoursBreakdown.day += dist.ord.day;
     hoursBreakdown.night += dist.ord.night;
     hoursBreakdown.holidayDay += dist.ord.holidayDay;
     hoursBreakdown.holidayNight += dist.ord.holidayNight;
+    
+    // Extra Hours (Consulta by default)
     hoursBreakdown.extraDay += dist.extra.day;
     hoursBreakdown.extraNight += dist.extra.night;
     hoursBreakdown.extraHolidayDay += dist.extra.holidayDay;
     hoursBreakdown.extraHolidayNight += dist.extra.holidayNight;
 
-    // AVA or Virtual Hours
-    if (record.isAVAShift || record.isVirtualShift) {
+    // AVA or Virtual Hours (Ordinary)
+    if (isAVAMain) {
       avaVirtualBreakdown.day += dist.ord.day;
       avaVirtualBreakdown.night += dist.ord.night;
       avaVirtualBreakdown.holidayDay += dist.ord.holidayDay;
       avaVirtualBreakdown.holidayNight += dist.ord.holidayNight;
-      avaVirtualBreakdown.extraDay += dist.extra.day;
-      avaVirtualBreakdown.extraNight += dist.extra.night;
-      avaVirtualBreakdown.extraHolidayDay += dist.extra.holidayDay;
-      avaVirtualBreakdown.extraHolidayNight += dist.extra.holidayNight;
       
-      // Subtract from hoursBreakdown because it was added above but it's actually an AVA/Virtual shift
+      // Subtract from hoursBreakdown because it was added above
       hoursBreakdown.day -= dist.ord.day;
       hoursBreakdown.night -= dist.ord.night;
       hoursBreakdown.holidayDay -= dist.ord.holidayDay;
       hoursBreakdown.holidayNight -= dist.ord.holidayNight;
+    }
+
+    // Extra Hours Type override
+    const extraType = record.extraHoursType || (isAVAMain ? 'avaVirtual' : 'consultation');
+    if (extraType === 'avaVirtual') {
+      avaVirtualBreakdown.extraDay += dist.extra.day;
+      avaVirtualBreakdown.extraNight += dist.extra.night;
+      avaVirtualBreakdown.extraHolidayDay += dist.extra.holidayDay;
+      avaVirtualBreakdown.extraHolidayNight += dist.extra.holidayNight;
+
+      // Subtract from hoursBreakdown
       hoursBreakdown.extraDay -= dist.extra.day;
       hoursBreakdown.extraNight -= dist.extra.night;
       hoursBreakdown.extraHolidayDay -= dist.extra.holidayDay;
@@ -827,8 +854,10 @@ const calculatePeriodTotals = (
                        hoursBreakdown.extraDay + hoursBreakdown.extraNight + hoursBreakdown.extraHolidayDay + hoursBreakdown.extraHolidayNight,
     totalMonthlyAVA: avaVirtualBreakdown.day + avaVirtualBreakdown.night + avaVirtualBreakdown.holidayDay + avaVirtualBreakdown.holidayNight +
                      avaVirtualBreakdown.extraDay + avaVirtualBreakdown.extraNight + avaVirtualBreakdown.extraHolidayDay + avaVirtualBreakdown.extraHolidayNight,
-    totalAccumulatedHours: (hoursBreakdown.day + hoursBreakdown.night + hoursBreakdown.holidayDay + hoursBreakdown.holidayNight + hoursBreakdown.extraDay + hoursBreakdown.extraNight + hoursBreakdown.extraHolidayDay + hoursBreakdown.extraHolidayNight) + 
-                           (avaVirtualBreakdown.day + avaVirtualBreakdown.night + avaVirtualBreakdown.holidayDay + avaVirtualBreakdown.holidayNight + avaVirtualBreakdown.extraDay + avaVirtualBreakdown.extraNight + avaVirtualBreakdown.extraHolidayDay + avaVirtualBreakdown.extraHolidayNight),
+    totalAccumulatedHours: (hoursBreakdown.day + hoursBreakdown.night + hoursBreakdown.holidayDay + hoursBreakdown.holidayNight +
+                            hoursBreakdown.extraDay + hoursBreakdown.extraNight + hoursBreakdown.extraHolidayDay + hoursBreakdown.extraHolidayNight) + 
+                           (avaVirtualBreakdown.day + avaVirtualBreakdown.night + avaVirtualBreakdown.holidayDay + avaVirtualBreakdown.holidayNight +
+                            avaVirtualBreakdown.extraDay + avaVirtualBreakdown.extraNight + avaVirtualBreakdown.extraHolidayDay + avaVirtualBreakdown.extraHolidayNight),
     totalRegularHours,
     totalExtraHours,
     trisemanaBreakdown,
@@ -872,6 +901,7 @@ function MainApp() {
     isAVAShift: false,
     isVirtualShift: false,
     isExtraShift: false,
+    extraHoursType: 'consultation'
   });
   const [quantities, setQuantities] = useState<Quantities>({
     hours: { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 },
@@ -903,9 +933,6 @@ function MainApp() {
     endDate: '',
     extraThreshold: 160
   });
-
-  const isPeriodDateInvalid = newPeriodData.startDate && newPeriodData.endDate && newPeriodData.startDate > newPeriodData.endDate;
-  const isTrisemanaDateInvalid = newTrisemanaData.startDate && newTrisemanaData.endDate && newTrisemanaData.startDate > newTrisemanaData.endDate;
 
   // --- Firestore Sync ---
   // --- Rates Sync ---
@@ -1339,19 +1366,29 @@ function MainApp() {
 
   const createTrisemana = async () => {
     if (!user) return;
-    const id = crypto.randomUUID();
-    const trisemana: Trisemana = {
-      id,
-      userId: user.uid,
-      name: newTrisemanaData.name || `Trisemana ${newTrisemanaData.startDate}`,
-      startDate: newTrisemanaData.startDate,
-      endDate: newTrisemanaData.endDate,
-      maxHours: newTrisemanaData.maxHours,
-      createdAt: new Date().toISOString()
-    };
-
-    const path = `users/${user.uid}/trisemanas/${id}`;
+    
     try {
+      // Archive previous trisemanas
+      const activeTrisemanas = trisemanas.filter(t => t.status === 'active');
+      for (const t of activeTrisemanas) {
+        await updateDoc(doc(db, `users/${user.uid}/trisemanas/${t.id}`), {
+          status: 'archived'
+        });
+      }
+
+      const id = crypto.randomUUID();
+      const trisemana: Trisemana = {
+        id,
+        userId: user.uid,
+        name: newTrisemanaData.name || `Trisemana ${newTrisemanaData.startDate}`,
+        startDate: newTrisemanaData.startDate,
+        endDate: newTrisemanaData.endDate,
+        maxHours: newTrisemanaData.maxHours,
+        status: 'active',
+        createdAt: new Date().toISOString()
+      };
+
+      const path = `users/${user.uid}/trisemanas/${id}`;
       await setDoc(doc(db, path), trisemana);
       setShowTrisemanaModal(false);
       setNewTrisemanaData({
@@ -1362,7 +1399,7 @@ function MainApp() {
       });
       showToast("Trisemana creada con éxito.");
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, path);
+      handleFirestoreError(error, OperationType.CREATE, `users/${user.uid}/trisemanas`);
     }
   };
 
@@ -1396,6 +1433,7 @@ function MainApp() {
       isHolidayEnd: shift.isHolidayEnd,
       isAVAShift: shift.isAVAShift,
       isVirtualShift: shift.isVirtualShift,
+      extraHoursType: shift.extraHoursType,
     };
 
     if (viewingArchive) {
@@ -1430,6 +1468,7 @@ function MainApp() {
         isAVAShift: false,
         isVirtualShift: false,
         isExtraShift: false,
+        extraHoursType: 'consultation'
       });
       setQuantities({
         hours: { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 },
@@ -1454,6 +1493,7 @@ function MainApp() {
         isAVAShift: false,
         isVirtualShift: false,
         isExtraShift: false,
+        extraHoursType: 'consultation',
       });
       setQuantities({
         hours: { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 },
@@ -1670,14 +1710,17 @@ function MainApp() {
 
   const editRecord = (record: ShiftRecord) => {
     setEditingId(record.id);
-    setShift(prev => ({ 
-      ...prev, 
+    setShift({ 
       date: record.date,
       startTime: record.startTime,
       endTime: record.endTime,
-      isAVAShift: Object.values(record.ava).some(v => v > 0) && Object.values(record.hours).every(v => v === 0),
+      isHolidayStart: record.isHolidayStart || false,
+      isHolidayEnd: record.isHolidayEnd || false,
+      isAVAShift: record.isAVAShift || false,
+      isVirtualShift: record.isVirtualShift || false,
       isExtraShift: record.isExtraShift || false,
-    }));
+      extraHoursType: record.extraHoursType || 'consultation'
+    });
     setQuantities({
       hours: { ...record.hours },
       ava: { ...record.ava },
@@ -1743,8 +1786,9 @@ function MainApp() {
     doc.text('DETALLE DE TURNOS', 14, 22);
 
     const recordsData = (viewingArchive ? viewingArchive.records : records).map(r => {
-      const h = r.isAVAShift || r.isVirtualShift ? { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 } : r.hours;
-      const a = (r.isAVAShift || r.isVirtualShift) ? r.hours : { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 };
+      const isAVAMain = r.isAVAShift || r.isVirtualShift || (Object.values(r.ava || {}).some(v => v > 0) && Object.values(r.hours || {}).every(v => v === 0));
+      const h = isAVAMain ? { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 } : r.hours;
+      const a = isAVAMain ? r.ava : { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 };
       
       return [
         r.date,
@@ -1780,15 +1824,19 @@ function MainApp() {
       'Pac Diu', 'Pac Noc', 'Pac F-Diu', 'Pac F-Noc'
     ];
 
-    const rows = baseRecords.map(r => [
-      r.date, r.startTime, r.endTime, r.isDefinitive ? 'Definitivo' : 'Proyección',
-      (r.isAVAShift || r.isVirtualShift) ? 'AVA/Virtual' : 'Consulta',
-      r.hours.day, r.hours.night, r.hours.holidayDay, r.hours.holidayNight, r.hours.extraDay, r.hours.extraNight, r.hours.extraHolidayDay, r.hours.extraHolidayNight,
-      r.applyPatients ? r.patients.day : 0, 
-      r.applyPatients ? r.patients.night : 0, 
-      r.applyPatients ? r.patients.holidayDay : 0, 
-      r.applyPatients ? r.patients.holidayNight : 0
-    ]);
+    const rows = baseRecords.map(r => {
+      const isAVAMain = r.isAVAShift || r.isVirtualShift || (Object.values(r.ava || {}).some(v => v > 0) && Object.values(r.hours || {}).every(v => v === 0));
+      const q = isAVAMain ? r.ava : r.hours;
+      return [
+        r.date, r.startTime, r.endTime, r.isDefinitive ? 'Definitivo' : 'Proyección',
+        isAVAMain ? 'AVA/Virtual' : 'Consulta',
+        q.day, q.night, q.holidayDay, q.holidayNight, q.extraDay, q.extraNight, q.extraHolidayDay, q.extraHolidayNight,
+        r.applyPatients ? r.patients.day : 0, 
+        r.applyPatients ? r.patients.night : 0, 
+        r.applyPatients ? r.patients.holidayDay : 0, 
+        r.applyPatients ? r.patients.holidayNight : 0
+      ];
+    });
 
     // Add summary
     rows.push([]);
@@ -2313,27 +2361,64 @@ function MainApp() {
                 </button>
               </div>
               
-              <div className="space-y-2 max-h-40 overflow-y-auto pr-1 custom-scrollbar">
-                {trisemanas.length === 0 ? (
-                  <p className="text-[10px] text-amber-400 italic text-center py-2">No hay trisemanas definidas</p>
-                ) : (
-                  trisemanas.map(t => (
-                    <div key={t.id} className="p-2 bg-white border border-amber-100 rounded-xl relative group shadow-sm">
-                      <div className="flex items-center justify-between mb-0.5">
-                        <span className="text-[10px] font-bold text-slate-700 truncate pr-4">{t.name}</span>
-                        <button 
-                          onClick={() => deleteTrisemana(t.id)}
-                          className="absolute top-2 right-2 p-1 text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"
-                        >
-                          <Trash2 className="w-2.5 h-2.5" />
-                        </button>
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <label className="text-[9px] font-bold text-amber-400 uppercase ml-1">Trisemana Activa</label>
+                  {(() => {
+                    const active = trisemanas.find(t => t.status === 'active');
+                    return active ? (
+                      <div className="p-3 bg-white border border-amber-200 rounded-xl shadow-sm relative group">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs font-bold text-slate-700 truncate pr-4">{active.name}</span>
+                          <div className="flex items-center gap-2">
+                            <button 
+                              onClick={() => deleteTrisemana(active.id)}
+                              className="p-1 text-slate-300 hover:text-rose-500 transition-colors"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                            <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[9px] text-slate-500">{active.startDate} al {active.endDate}</span>
+                          <span className="text-[9px] font-bold text-amber-600">{active.maxHours}h</span>
+                        </div>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-[9px] text-slate-500">{t.startDate} al {t.endDate}</span>
-                        <span className="text-[9px] font-bold text-amber-600">{t.maxHours}h</span>
-                      </div>
+                    ) : (
+                      <button 
+                        onClick={() => setShowTrisemanaModal(true)}
+                        className="w-full py-3 bg-white border border-dashed border-amber-200 text-amber-600 text-xs font-bold rounded-xl hover:bg-amber-100 transition-all flex items-center justify-center gap-2"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        Nueva Trisemana
+                      </button>
+                    );
+                  })()}
+                </div>
+
+                {trisemanas.filter(t => t.status === 'archived').length > 0 && (
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold text-slate-400 uppercase ml-1">Historial Trisemanas</label>
+                    <div className="flex gap-2">
+                      <select 
+                        onChange={(e) => {
+                          const t = trisemanas.find(tri => tri.id === e.target.value);
+                          if (t) {
+                            // Optionally do something when selecting an archived trisemana
+                          }
+                        }}
+                        className="flex-1 bg-white border border-amber-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-700 focus:ring-2 focus:ring-amber-500 outline-none transition-all"
+                      >
+                        <option value="" disabled selected>Ver historial...</option>
+                        {trisemanas.filter(t => t.status === 'archived').map(t => (
+                          <option key={t.id} value={t.id}>
+                            {t.name} ({t.startDate})
+                          </option>
+                        ))}
+                      </select>
                     </div>
-                  ))
+                  </div>
                 )}
               </div>
             </section>
@@ -3157,7 +3242,8 @@ function MainApp() {
                           setShift({ 
                             ...shift, 
                             isAVAShift: type.id === 'avaVirtual',
-                            isVirtualShift: false // We treat them as one now
+                            isVirtualShift: false, // We treat them as one now
+                            extraHoursType: type.id as 'consultation' | 'avaVirtual'
                           });
                           if (type.id !== 'consultation') {
                             setQuantities(prev => ({ 
@@ -3262,9 +3348,29 @@ function MainApp() {
 
                 {/* Extra Hours Adjustment */}
                 <div className="space-y-4">
-                  <div className="flex items-center gap-2 text-amber-600">
-                    <PlusCircle className="w-4 h-4" />
-                    <h3 className="text-sm font-bold">Horas de Turno Adicional</h3>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2 text-amber-600">
+                      <PlusCircle className="w-4 h-4" />
+                      <h3 className="text-sm font-bold">Horas de Turno Adicional</h3>
+                    </div>
+                    <div className="flex gap-1 bg-amber-100/50 p-0.5 rounded-lg border border-amber-200">
+                      {[
+                        { id: 'consultation', label: 'Cons' },
+                        { id: 'avaVirtual', label: 'AVA/V' },
+                      ].map((type) => (
+                        <button
+                          key={type.id}
+                          onClick={() => setShift({ ...shift, extraHoursType: type.id as 'consultation' | 'avaVirtual' })}
+                          className={`px-2 py-0.5 rounded-md text-[9px] font-bold uppercase transition-all ${
+                            shift.extraHoursType === type.id 
+                              ? 'bg-amber-600 text-white shadow-sm' 
+                              : 'text-amber-700 hover:bg-amber-200'
+                          }`}
+                        >
+                          {type.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     {[
@@ -3278,13 +3384,13 @@ function MainApp() {
                         <input 
                           type="number"
                           step="0.5"
-                          value={(shift.isAVAShift || shift.isVirtualShift) ? quantities.ava[item.key as keyof Quantities['ava']] : quantities.hours[item.key as keyof Quantities['hours']]}
+                          value={shift.extraHoursType === 'avaVirtual' ? quantities.ava[item.key as keyof Quantities['ava']] : quantities.hours[item.key as keyof Quantities['hours']]}
                           onChange={(e) => {
                             const val = Number(e.target.value);
                             setQuantities({
                               ...quantities,
-                              [(shift.isAVAShift || shift.isVirtualShift) ? 'ava' : 'hours']: { 
-                                ...quantities[(shift.isAVAShift || shift.isVirtualShift) ? 'ava' : 'hours'], 
+                              [shift.extraHoursType === 'avaVirtual' ? 'ava' : 'hours']: { 
+                                ...quantities[shift.extraHoursType === 'avaVirtual' ? 'ava' : 'hours'], 
                                 [item.key]: val 
                               }
                             })
@@ -3374,6 +3480,7 @@ function MainApp() {
                         isAVAShift: false,
                         isVirtualShift: false,
                         isExtraShift: false,
+                        extraHoursType: 'consultation',
                       });
                       setQuantities({
                         hours: { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 },
@@ -3662,16 +3769,21 @@ function MainApp() {
                             <td className="p-4 text-xs font-mono font-bold">
                               {(() => {
                                 const dist = results.all.recordDistributions[record.id];
-                                const h = (record.isAVAShift || record.isVirtualShift) ? { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 } : (dist ? {
-                                  day: dist.ord.day,
-                                  night: dist.ord.night,
-                                  holidayDay: dist.ord.holidayDay,
-                                  holidayNight: dist.ord.holidayNight,
-                                  extraDay: dist.extra.day,
-                                  extraNight: dist.extra.night,
-                                  extraHolidayDay: dist.extra.holidayDay,
-                                  extraHolidayNight: dist.extra.holidayNight
-                                } : record.hours);
+                                if (!dist) return null;
+
+                                const isAVAMain = record.isAVAShift || record.isVirtualShift || (Object.values(record.ava || {}).some(v => v > 0) && Object.values(record.hours || {}).every(v => v === 0));
+                                const extraType = record.extraHoursType || (isAVAMain ? 'avaVirtual' : 'consultation');
+
+                                const h = {
+                                  day: isAVAMain ? 0 : dist.ord.day,
+                                  night: isAVAMain ? 0 : dist.ord.night,
+                                  holidayDay: isAVAMain ? 0 : dist.ord.holidayDay,
+                                  holidayNight: isAVAMain ? 0 : dist.ord.holidayNight,
+                                  extraDay: extraType === 'consultation' ? dist.extra.day : 0,
+                                  extraNight: extraType === 'consultation' ? dist.extra.night : 0,
+                                  extraHolidayDay: extraType === 'consultation' ? dist.extra.holidayDay : 0,
+                                  extraHolidayNight: extraType === 'consultation' ? dist.extra.holidayNight : 0
+                                };
 
                                 return (
                                   <div className="flex flex-col">
@@ -3697,16 +3809,21 @@ function MainApp() {
                             <td className="p-4 text-xs font-mono font-bold">
                               {(() => {
                                 const dist = results.all.recordDistributions[record.id];
-                                const a = (record.isAVAShift || record.isVirtualShift) ? (dist ? {
-                                  day: dist.ord.day,
-                                  night: dist.ord.night,
-                                  holidayDay: dist.ord.holidayDay,
-                                  holidayNight: dist.ord.holidayNight,
-                                  extraDay: dist.extra.day,
-                                  extraNight: dist.extra.night,
-                                  extraHolidayDay: dist.extra.holidayDay,
-                                  extraHolidayNight: dist.extra.holidayNight
-                                } : record.ava) : { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 };
+                                if (!dist) return null;
+
+                                const isAVAMain = record.isAVAShift || record.isVirtualShift || (Object.values(record.ava || {}).some(v => v > 0) && Object.values(record.hours || {}).every(v => v === 0));
+                                const extraType = record.extraHoursType || (isAVAMain ? 'avaVirtual' : 'consultation');
+
+                                const a = {
+                                  day: isAVAMain ? dist.ord.day : 0,
+                                  night: isAVAMain ? dist.ord.night : 0,
+                                  holidayDay: isAVAMain ? dist.ord.holidayDay : 0,
+                                  holidayNight: isAVAMain ? dist.ord.holidayNight : 0,
+                                  extraDay: extraType === 'avaVirtual' ? dist.extra.day : 0,
+                                  extraNight: extraType === 'avaVirtual' ? dist.extra.night : 0,
+                                  extraHolidayDay: extraType === 'avaVirtual' ? dist.extra.holidayDay : 0,
+                                  extraHolidayNight: extraType === 'avaVirtual' ? dist.extra.holidayNight : 0
+                                };
 
                                 return (
                                   <div className="flex flex-col">
@@ -3812,7 +3929,7 @@ function MainApp() {
                           <div className="flex flex-col gap-2">
                             <div className="flex flex-col">
                               <span className="text-xs font-mono font-black text-indigo-600">{results.all.totalMonthlyHours.toFixed(1)}h</span>
-                              <span className="text-[9px] font-bold text-slate-400 uppercase">Total Horas Consulta</span>
+                              <span className="text-[9px] font-bold text-slate-400 uppercase">Horas Consulta</span>
                             </div>
                             <div className="grid grid-cols-2 gap-x-2 text-[8px] font-bold uppercase tracking-tighter">
                               <span className="text-amber-600">D: {results.all.hoursBreakdown.day.toFixed(1)}h</span>
@@ -3833,7 +3950,7 @@ function MainApp() {
                           <div className="flex flex-col gap-2">
                             <div className="flex flex-col">
                               <span className="text-xs font-mono font-black text-violet-600">{results.all.totalMonthlyAVA.toFixed(1)}h</span>
-                              <span className="text-[9px] font-bold text-slate-400 uppercase">Total Horas AVA/Virtual</span>
+                              <span className="text-[9px] font-bold text-slate-400 uppercase">Horas AVA/Virtual</span>
                             </div>
                             <div className="grid grid-cols-2 gap-x-2 text-[8px] font-bold uppercase tracking-tighter">
                               <span className="text-amber-600">D: {results.all.avaBreakdown.day.toFixed(1)}h</span>
@@ -3873,10 +3990,48 @@ function MainApp() {
                             <span className="text-[9px] font-bold text-slate-400 uppercase">Bruto Total</span>
                             
                             <div className="mt-2 p-2 bg-slate-50 rounded-lg border border-slate-100">
+                              <p className="text-[8px] font-bold text-slate-600 uppercase mb-1">Resumen Horas</p>
+                              <div className="flex flex-col gap-1 text-[8px] font-bold text-slate-500">
+                                <div className="flex flex-col border-b border-slate-200 pb-1">
+                                  <div className="flex justify-between text-indigo-600">
+                                    <span>Consulta:</span> 
+                                    <span>{results.all.hoursBreakdown.day + results.all.hoursBreakdown.night + results.all.hoursBreakdown.holidayDay + results.all.hoursBreakdown.holidayNight + results.all.hoursBreakdown.extraDay + results.all.hoursBreakdown.extraNight + results.all.hoursBreakdown.extraHolidayDay + results.all.hoursBreakdown.extraHolidayNight}h</span>
+                                  </div>
+                                  <div className="grid grid-cols-4 gap-x-1 text-[7px] opacity-70">
+                                    <span>D: {results.all.hoursBreakdown.day}</span>
+                                    <span>N: {results.all.hoursBreakdown.night}</span>
+                                    <span>DF: {results.all.hoursBreakdown.holidayDay}</span>
+                                    <span>NF: {results.all.hoursBreakdown.holidayNight}</span>
+                                    <span>ED: {results.all.hoursBreakdown.extraDay}</span>
+                                    <span>EN: {results.all.hoursBreakdown.extraNight}</span>
+                                    <span>EFD: {results.all.hoursBreakdown.extraHolidayDay}</span>
+                                    <span>EFN: {results.all.hoursBreakdown.extraHolidayNight}</span>
+                                  </div>
+                                </div>
+                                <div className="flex flex-col">
+                                  <div className="flex justify-between text-violet-600">
+                                    <span>AVA/Virtual:</span> 
+                                    <span>{results.all.avaBreakdown.day + results.all.avaBreakdown.night + results.all.avaBreakdown.holidayDay + results.all.avaBreakdown.holidayNight + results.all.avaBreakdown.extraDay + results.all.avaBreakdown.extraNight + results.all.avaBreakdown.extraHolidayDay + results.all.avaBreakdown.extraHolidayNight}h</span>
+                                  </div>
+                                  <div className="grid grid-cols-4 gap-x-1 text-[7px] opacity-70">
+                                    <span>D: {results.all.avaBreakdown.day}</span>
+                                    <span>N: {results.all.avaBreakdown.night}</span>
+                                    <span>DF: {results.all.avaBreakdown.holidayDay}</span>
+                                    <span>NF: {results.all.avaBreakdown.holidayNight}</span>
+                                    <span>ED: {results.all.avaBreakdown.extraDay}</span>
+                                    <span>EN: {results.all.avaBreakdown.extraNight}</span>
+                                    <span>EFD: {results.all.avaBreakdown.extraHolidayDay}</span>
+                                    <span>EFN: {results.all.avaBreakdown.extraHolidayNight}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="mt-2 p-2 bg-slate-50 rounded-lg border border-slate-100">
                               <p className="text-[8px] font-bold text-slate-600 uppercase mb-1">Acumulado Total</p>
                               <div className="flex justify-between items-center">
-                                <span className="text-xs font-mono font-black text-slate-700">{results.all.totalAccumulatedHours.toFixed(1)}h</span>
-                                <span className="text-[7px] font-bold text-slate-400 uppercase">Gran Total Horas</span>
+                                <span className="text-xs font-mono font-black text-slate-700">{results.all.totalAccumulatedHours}h</span>
+                                <span className="text-[7px] font-bold text-slate-400 uppercase">Total Periodo</span>
                               </div>
                             </div>
 
@@ -3884,10 +4039,7 @@ function MainApp() {
                               <p className="text-[8px] font-bold text-indigo-600 uppercase mb-1">Resumen Dinero</p>
                               <div className="flex flex-col gap-1 text-[8px] font-bold text-slate-500">
                                 <div className="flex flex-col border-b border-indigo-100 pb-1">
-                                  <div className="flex justify-between text-indigo-600">
-                                    <span>Consulta ({results.all.totalMonthlyHours.toFixed(1)}h):</span> 
-                                    <span>{formatCurrency(results.all.totalH)}</span>
-                                  </div>
+                                  <div className="flex justify-between text-indigo-600"><span>Consulta:</span> <span>{formatCurrency(results.all.totalH)}</span></div>
                                   <div className="grid grid-cols-2 gap-x-2 text-[7px] opacity-70">
                                     <span>D: {formatCurrency(results.all.hoursValues.day)}</span>
                                     <span>N: {formatCurrency(results.all.hoursValues.night)}</span>
@@ -3900,10 +4052,7 @@ function MainApp() {
                                   </div>
                                 </div>
                                 <div className="flex flex-col border-b border-indigo-100 pb-1">
-                                  <div className="flex justify-between text-violet-600">
-                                    <span>AVA/Virtual ({results.all.totalMonthlyAVA.toFixed(1)}h):</span> 
-                                    <span>{formatCurrency(results.all.totalAVA)}</span>
-                                  </div>
+                                  <div className="flex justify-between text-violet-600"><span>AVA/Virtual:</span> <span>{formatCurrency(results.all.totalAVA)}</span></div>
                                   <div className="grid grid-cols-2 gap-x-2 text-[7px] opacity-70">
                                     <span>D: {formatCurrency(results.all.avaValues.day)}</span>
                                     <span>N: {formatCurrency(results.all.avaValues.night)}</span>
@@ -4674,7 +4823,7 @@ function MainApp() {
                         type="date"
                         value={newTrisemanaData.startDate}
                         onChange={(e) => setNewTrisemanaData({ ...newTrisemanaData, startDate: e.target.value })}
-                        className={`w-full bg-slate-50 border ${isTrisemanaDateInvalid ? 'border-rose-300 ring-2 ring-rose-100' : 'border-slate-200'} rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-amber-500 outline-none transition-all`}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-amber-500 outline-none transition-all"
                       />
                     </div>
                     <div>
@@ -4683,17 +4832,10 @@ function MainApp() {
                         type="date"
                         value={newTrisemanaData.endDate}
                         onChange={(e) => setNewTrisemanaData({ ...newTrisemanaData, endDate: e.target.value })}
-                        className={`w-full bg-slate-50 border ${isTrisemanaDateInvalid ? 'border-rose-300 ring-2 ring-rose-100' : 'border-slate-200'} rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-amber-500 outline-none transition-all`}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-amber-500 outline-none transition-all"
                       />
                     </div>
                   </div>
-
-                  {isTrisemanaDateInvalid && (
-                    <div className="p-3 bg-rose-50 border border-rose-100 rounded-xl flex items-center gap-2 text-rose-600 text-[10px] font-bold">
-                      <AlertCircle className="w-3.5 h-3.5" />
-                      <span>La fecha de inicio no puede ser posterior a la fecha de fin.</span>
-                    </div>
-                  )}
 
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1.5 tracking-wider">Tope de Horas (Trisemana)</label>
@@ -4711,8 +4853,7 @@ function MainApp() {
                 
                 <button 
                   onClick={createTrisemana}
-                  disabled={isTrisemanaDateInvalid}
-                  className={`w-full py-4 ${isTrisemanaDateInvalid ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-amber-600 text-white hover:bg-amber-700 shadow-lg shadow-amber-200'} font-bold rounded-2xl transition-all flex items-center justify-center gap-2`}
+                  className="w-full py-4 bg-amber-600 text-white font-bold rounded-2xl hover:bg-amber-700 transition-all shadow-lg shadow-amber-200 flex items-center justify-center gap-2"
                 >
                   <CheckCircle2 className="w-5 h-5" />
                   Crear Trisemana
@@ -4776,7 +4917,7 @@ function MainApp() {
                         type="date"
                         value={newPeriodData.startDate}
                         onChange={(e) => setNewPeriodData({ ...newPeriodData, startDate: e.target.value })}
-                        className={`w-full bg-slate-50 border ${isPeriodDateInvalid ? 'border-rose-300 ring-2 ring-rose-100' : 'border-slate-200'} rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all`}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                       />
                     </div>
                     <div>
@@ -4785,17 +4926,10 @@ function MainApp() {
                         type="date"
                         value={newPeriodData.endDate}
                         onChange={(e) => setNewPeriodData({ ...newPeriodData, endDate: e.target.value })}
-                        className={`w-full bg-slate-50 border ${isPeriodDateInvalid ? 'border-rose-300 ring-2 ring-rose-100' : 'border-slate-200'} rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all`}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                       />
                     </div>
                   </div>
-
-                  {isPeriodDateInvalid && (
-                    <div className="p-3 bg-rose-50 border border-rose-100 rounded-xl flex items-center gap-2 text-rose-600 text-[10px] font-bold">
-                      <AlertCircle className="w-3.5 h-3.5" />
-                      <span>La fecha de inicio no puede ser posterior a la fecha de fin.</span>
-                    </div>
-                  )}
 
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1.5 tracking-wider">Límite de Horas para Extras (Threshold)</label>
@@ -4826,8 +4960,7 @@ function MainApp() {
                 </button>
                 <button 
                   onClick={savePeriod}
-                  disabled={isPeriodDateInvalid}
-                  className={`flex-1 py-3 ${isPeriodDateInvalid ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-200'} font-bold rounded-xl transition-all`}
+                  className="flex-1 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200"
                 >
                   {editingPeriod ? 'Guardar Cambios' : 'Iniciar Periodo'}
                 </button>
