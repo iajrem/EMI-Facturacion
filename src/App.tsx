@@ -567,9 +567,19 @@ const calculatePeriodTotals = (
   // This ensures cumulative hours track correctly across billing periods
   const recordDistributions: { [recordId: string]: any } = {};
   
-  // Find all trisemanas that could affect the current records
+  // Find all trisemanas that overlap with the current period or have records in it
   const relevantTrisemanas = trisemanas
-    .filter(t => records.some(r => r.trisemanaId === t.id || (!r.trisemanaId && r.date >= t.startDate && r.date <= t.endDate)))
+    .filter(t => {
+      const p = periods.find(per => per.id === selectedPeriodId);
+      const isOverlapping = p ? (
+        (t.startDate >= p.startDate && t.startDate <= p.endDate) || 
+        (t.endDate >= p.startDate && t.endDate <= p.endDate) ||
+        (t.startDate <= p.startDate && t.endDate >= p.endDate)
+      ) : false;
+      
+      const hasRecords = records.some(r => r.trisemanaId === t.id || (!r.trisemanaId && r.date >= t.startDate && r.date <= t.endDate));
+      return isOverlapping || hasRecords;
+    })
     .sort((a, b) => a.startDate.localeCompare(b.startDate));
 
   relevantTrisemanas.forEach(trisemana => {
@@ -1473,23 +1483,23 @@ function MainApp() {
     if (!user) return;
     
     try {
-      if (editingTrisemana) {
-        const path = `users/${user.uid}/trisemanas/${editingTrisemana.id}`;
-        await updateDoc(doc(db, path), {
-          name: newTrisemanaData.name,
-          startDate: newTrisemanaData.startDate,
-          endDate: newTrisemanaData.endDate,
-          maxHours: newTrisemanaData.maxHours
-        });
-        showToast("Trisemana actualizada con éxito.");
-      } else {
-        // Archive previous trisemanas
-        const activeTrisemanas = trisemanas.filter(t => t.status === 'active');
-        for (const t of activeTrisemanas) {
-          await updateDoc(doc(db, `users/${user.uid}/trisemanas/${t.id}`), {
-            status: 'archived'
+        if (editingTrisemana) {
+          const path = `users/${user.uid}/trisemanas/${editingTrisemana.id}`;
+          await updateDoc(doc(db, path), {
+            name: newTrisemanaData.name,
+            startDate: newTrisemanaData.startDate,
+            endDate: newTrisemanaData.endDate,
+            maxHours: newTrisemanaData.maxHours
           });
-        }
+          showToast("Trisemana actualizada con éxito.");
+        } else {
+          // Archive previous trisemanas (including those without status)
+          const activeTrisemanas = trisemanas.filter(t => t.status !== 'archived');
+          for (const t of activeTrisemanas) {
+            await updateDoc(doc(db, `users/${user.uid}/trisemanas/${t.id}`), {
+              status: 'archived'
+            });
+          }
 
         const id = crypto.randomUUID();
         const trisemana: Trisemana = {
@@ -2492,42 +2502,60 @@ function MainApp() {
               </div>
               
               <div className="space-y-3">
-                {/* Active Trisemana */}
-                {trisemanas.filter(t => t.status === 'active').length === 0 ? (
-                  <button 
-                    onClick={() => {
-                      setEditingTrisemana(null);
-                      setShowTrisemanaModal(true);
-                    }}
-                    className="w-full py-3 bg-white border border-dashed border-amber-200 text-amber-600 text-xs font-bold rounded-xl hover:bg-amber-100 transition-all flex items-center justify-center gap-2"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    Nueva Trisemana
-                  </button>
-                ) : (
-                  trisemanas.filter(t => t.status === 'active').map(t => (
+                {/* Trisemanas del Periodo Seleccionado */}
+                {(() => {
+                  const p = periods.find(per => per.id === selectedPeriodId);
+                  if (!p) return null;
+                  const periodTris = trisemanas.filter(t => 
+                    (t.startDate >= p.startDate && t.startDate <= p.endDate) || 
+                    (t.endDate >= p.startDate && t.endDate <= p.endDate) ||
+                    (t.startDate <= p.startDate && t.endDate >= p.endDate)
+                  );
+                  
+                  if (periodTris.length === 0) {
+                    return (
+                      <button 
+                        onClick={() => {
+                          setEditingTrisemana(null);
+                          setShowTrisemanaModal(true);
+                        }}
+                        className="w-full py-3 bg-white border border-dashed border-amber-200 text-amber-600 text-xs font-bold rounded-xl hover:bg-amber-100 transition-all flex items-center justify-center gap-2"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        Vincular Trisemana
+                      </button>
+                    );
+                  }
+
+                  return periodTris.map(t => (
                     <div 
                       key={t.id}
-                      className="p-3 bg-amber-50 border border-amber-200 rounded-xl shadow-sm"
+                      className={`p-3 border rounded-xl shadow-sm transition-all ${
+                        t.status === 'active' 
+                          ? 'bg-amber-50 border-amber-200 ring-1 ring-amber-100' 
+                          : 'bg-white border-slate-100'
+                      }`}
                     >
                       <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-amber-900 truncate max-w-[120px]">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={`text-xs font-bold truncate ${t.status === 'active' ? 'text-amber-900' : 'text-slate-700'}`}>
                             {t.name}
                           </span>
-                          <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                          {t.status === 'active' && (
+                            <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse shrink-0" />
+                          )}
                         </div>
                         <div className="flex items-center gap-1">
                           <button 
                             onClick={() => openEditTrisemana(t)}
-                            className="p-1 text-amber-400 hover:text-amber-600 transition-colors"
+                            className="p-1 text-slate-400 hover:text-amber-600 transition-colors"
                             title="Editar"
                           >
                             <Edit3 className="w-3 h-3" />
                           </button>
                           <button 
                             onClick={() => deleteTrisemana(t.id)}
-                            className="p-1 text-amber-400 hover:text-rose-500 transition-colors"
+                            className="p-1 text-slate-400 hover:text-rose-500 transition-colors"
                             title="Eliminar"
                           >
                             <Trash2 className="w-3 h-3" />
@@ -2535,85 +2563,98 @@ function MainApp() {
                         </div>
                       </div>
                       <div className="flex items-center justify-between">
-                        <span className="text-[9px] text-amber-700">{t.startDate} al {t.endDate}</span>
+                        <span className="text-[9px] text-slate-500">{t.startDate} al {t.endDate}</span>
                         <span className="text-[9px] font-bold text-amber-600">{t.maxHours}h</span>
                       </div>
                     </div>
-                  ))
-                )}
+                  ));
+                })()}
 
-                {/* Histórico Colapsable */}
-                {trisemanas.filter(t => t.status === 'archived').length > 0 && (
-                  <div className="space-y-1">
-                    <button 
-                      onClick={() => setShowTrisemanaHistory(!showTrisemanaHistory)}
-                      className="w-full flex items-center justify-between px-2 py-1 hover:bg-amber-100/50 rounded-lg transition-all group"
-                    >
-                      <div className="flex items-center gap-2">
-                        <History className="w-3 h-3 text-amber-400" />
-                        <span className="text-[10px] font-bold text-amber-500 uppercase">Historial</span>
-                        <span className="bg-amber-100 text-amber-600 text-[8px] px-1.5 py-0.5 rounded-full font-bold">
-                          {trisemanas.filter(t => t.status === 'archived').length}
-                        </span>
-                      </div>
-                      <ChevronDown className={`w-3 h-3 text-amber-400 transition-transform ${showTrisemanaHistory ? 'rotate-180' : ''}`} />
-                    </button>
+                {/* Histórico General */}
+                {(() => {
+                  const p = periods.find(per => per.id === selectedPeriodId);
+                  const historyTris = trisemanas.filter(t => {
+                    if (!p) return t.status !== 'active';
+                    const isRelevant = (t.startDate >= p.startDate && t.startDate <= p.endDate) || 
+                                     (t.endDate >= p.startDate && t.endDate <= p.endDate) ||
+                                     (t.startDate <= p.startDate && t.endDate >= p.endDate);
+                    return !isRelevant;
+                  });
 
-                    {showTrisemanaHistory && (
-                      <div className="space-y-2 mt-1 max-h-[200px] overflow-y-auto pr-1 custom-scrollbar animate-in fade-in slide-in-from-top-1">
-                        {trisemanas.filter(t => t.status === 'archived').sort((a, b) => b.startDate.localeCompare(a.startDate)).map(t => (
-                          <div 
-                            key={t.id}
-                            className="p-2.5 bg-white border border-slate-100 rounded-xl opacity-70 hover:opacity-100 transition-all"
-                          >
-                            <div className="flex items-center justify-between mb-0.5">
-                              <span className="text-[10px] font-bold text-slate-700 truncate max-w-[100px]">{t.name}</span>
-                              <div className="flex items-center gap-1">
-                                <button 
-                                  onClick={async () => {
-                                    if (!user) return;
-                                    try {
-                                      const active = trisemanas.find(tri => tri.status === 'active');
-                                      if (active) {
-                                        await updateDoc(doc(db, `users/${user.uid}/trisemanas/${active.id}`), { status: 'archived' });
+                  if (historyTris.length === 0) return null;
+
+                  return (
+                    <div className="space-y-1">
+                      <button 
+                        onClick={() => setShowTrisemanaHistory(!showTrisemanaHistory)}
+                        className="w-full flex items-center justify-between px-2 py-1 hover:bg-amber-100/50 rounded-lg transition-all group"
+                      >
+                        <div className="flex items-center gap-2">
+                          <History className="w-3 h-3 text-amber-400" />
+                          <span className="text-[10px] font-bold text-amber-500 uppercase">Historial</span>
+                          <span className="bg-amber-100 text-amber-600 text-[8px] px-1.5 py-0.5 rounded-full font-bold">
+                            {historyTris.length}
+                          </span>
+                        </div>
+                        <ChevronDown className={`w-3 h-3 text-amber-400 transition-transform ${showTrisemanaHistory ? 'rotate-180' : ''}`} />
+                      </button>
+
+                      {showTrisemanaHistory && (
+                        <div className="space-y-2 mt-1 max-h-[200px] overflow-y-auto pr-1 custom-scrollbar animate-in fade-in slide-in-from-top-1">
+                          {historyTris.sort((a, b) => b.startDate.localeCompare(a.startDate)).map(t => (
+                            <div 
+                              key={t.id}
+                              className="p-2.5 bg-white border border-slate-100 rounded-xl opacity-70 hover:opacity-100 transition-all"
+                            >
+                              <div className="flex items-center justify-between mb-0.5">
+                                <span className="text-[10px] font-bold text-slate-700 truncate max-w-[100px]">{t.name}</span>
+                                <div className="flex items-center gap-1">
+                                  <button 
+                                    onClick={async () => {
+                                      if (!user) return;
+                                      try {
+                                        const active = trisemanas.find(tri => tri.status === 'active');
+                                        if (active) {
+                                          await updateDoc(doc(db, `users/${user.uid}/trisemanas/${active.id}`), { status: 'archived' });
+                                        }
+                                        await updateDoc(doc(db, `users/${user.uid}/trisemanas/${t.id}`), { status: 'active' });
+                                        showToast(`Trisemana "${t.name}" activada.`);
+                                      } catch (error) {
+                                        handleFirestoreError(error, OperationType.UPDATE, 'trisemanas');
                                       }
-                                      await updateDoc(doc(db, `users/${user.uid}/trisemanas/${t.id}`), { status: 'active' });
-                                      showToast(`Trisemana "${t.name}" activada.`);
-                                    } catch (error) {
-                                      handleFirestoreError(error, OperationType.UPDATE, 'trisemanas');
-                                    }
-                                  }}
-                                  className="p-0.5 text-slate-400 hover:text-amber-500 transition-colors"
-                                  title="Re-activar"
-                                >
-                                  <CheckCircle2 className="w-2.5 h-2.5" />
-                                </button>
-                                <button 
-                                  onClick={() => openEditTrisemana(t)}
-                                  className="p-0.5 text-slate-400 hover:text-indigo-500 transition-colors"
-                                  title="Editar"
-                                >
-                                  <Edit3 className="w-2.5 h-2.5" />
-                                </button>
-                                <button 
-                                  onClick={() => deleteTrisemana(t.id)}
-                                  className="p-0.5 text-slate-400 hover:text-rose-500 transition-colors"
-                                  title="Eliminar"
-                                >
-                                  <Trash2 className="w-2.5 h-2.5" />
-                                </button>
+                                    }}
+                                    className="p-0.5 text-slate-400 hover:text-amber-500 transition-colors"
+                                    title="Re-activar"
+                                  >
+                                    <CheckCircle2 className="w-2.5 h-2.5" />
+                                  </button>
+                                  <button 
+                                    onClick={() => openEditTrisemana(t)}
+                                    className="p-0.5 text-slate-400 hover:text-indigo-500 transition-colors"
+                                    title="Editar"
+                                  >
+                                    <Edit3 className="w-2.5 h-2.5" />
+                                  </button>
+                                  <button 
+                                    onClick={() => deleteTrisemana(t.id)}
+                                    className="p-0.5 text-slate-400 hover:text-rose-500 transition-colors"
+                                    title="Eliminar"
+                                  >
+                                    <Trash2 className="w-2.5 h-2.5" />
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="flex items-center justify-between text-[8px] text-slate-400">
+                                <span>{t.startDate} - {t.endDate}</span>
+                                <span className="font-bold">{t.maxHours}h</span>
                               </div>
                             </div>
-                            <div className="flex items-center justify-between text-[8px] text-slate-400">
-                              <span>{t.startDate} - {t.endDate}</span>
-                              <span className="font-bold">{t.maxHours}h</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             </section>
 
@@ -3073,15 +3114,22 @@ function MainApp() {
                             <Info className="w-3 h-3 text-slate-400" />
                           </button>
                         </label>
-                        <input 
-                          type="checkbox"
-                          checked={rates.payroll.usePrepagada}
-                          onChange={(e) => setRates({
-                            ...rates,
-                            payroll: { ...rates.payroll, usePrepagada: e.target.checked }
-                          })}
-                          className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                        />
+                        <div className="flex items-center gap-2">
+                          {results.definitive.gross > 0 && rates.payroll.usePrepagada && (
+                            <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">
+                              {((Math.min(rates.payroll.prepagada, 16 * rates.payroll.uvtValue) / results.definitive.gross) * 100).toFixed(1)}%
+                            </span>
+                          )}
+                          <input 
+                            type="checkbox"
+                            checked={rates.payroll.usePrepagada}
+                            onChange={(e) => setRates({
+                              ...rates,
+                              payroll: { ...rates.payroll, usePrepagada: e.target.checked }
+                            })}
+                            className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                        </div>
                       </div>
                       <input 
                         type="number"
@@ -3105,15 +3153,22 @@ function MainApp() {
                             <Info className="w-3 h-3 text-slate-400" />
                           </button>
                         </label>
-                        <input 
-                          type="checkbox"
-                          checked={rates.payroll.useInteresesVivienda}
-                          onChange={(e) => setRates({
-                            ...rates,
-                            payroll: { ...rates.payroll, useInteresesVivienda: e.target.checked }
-                          })}
-                          className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                        />
+                        <div className="flex items-center gap-2">
+                          {results.definitive.gross > 0 && rates.payroll.useInteresesVivienda && (
+                            <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">
+                              {((Math.min(rates.payroll.interesesVivienda, 100 * rates.payroll.uvtValue) / results.definitive.gross) * 100).toFixed(1)}%
+                            </span>
+                          )}
+                          <input 
+                            type="checkbox"
+                            checked={rates.payroll.useInteresesVivienda}
+                            onChange={(e) => setRates({
+                              ...rates,
+                              payroll: { ...rates.payroll, useInteresesVivienda: e.target.checked }
+                            })}
+                            className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                        </div>
                       </div>
                       <input 
                         type="number"
@@ -3137,15 +3192,22 @@ function MainApp() {
                             <Info className="w-3 h-3 text-slate-400" />
                           </button>
                         </label>
-                        <input 
-                          type="checkbox"
-                          checked={rates.payroll.usePensionVoluntaria}
-                          onChange={(e) => setRates({
-                            ...rates,
-                            payroll: { ...rates.payroll, usePensionVoluntaria: e.target.checked }
-                          })}
-                          className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                        />
+                        <div className="flex items-center gap-2">
+                          {results.definitive.gross > 0 && rates.payroll.usePensionVoluntaria && (
+                            <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">
+                              {((Math.min(rates.payroll.pensionVoluntaria, results.definitive.gross * 0.3) / results.definitive.gross) * 100).toFixed(1)}%
+                            </span>
+                          )}
+                          <input 
+                            type="checkbox"
+                            checked={rates.payroll.usePensionVoluntaria}
+                            onChange={(e) => setRates({
+                              ...rates,
+                              payroll: { ...rates.payroll, usePensionVoluntaria: e.target.checked }
+                            })}
+                            className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                        </div>
                       </div>
                       <input 
                         type="number"
@@ -4654,9 +4716,32 @@ function MainApp() {
                         </div>
                       )}
                       {results.definitive.retefuente > 0 && (
-                        <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                          <span className="text-sm font-medium text-slate-600">Retención en la Fuente</span>
-                          <span className="font-bold text-rose-700">-{formatCurrency(results.definitive.retefuente)}</span>
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                            <div className="flex flex-col">
+                              <span className="text-sm font-medium text-slate-600">Retención en la Fuente</span>
+                              <div className="flex flex-wrap gap-2 mt-1">
+                                {rates.payroll.dependents && (
+                                  <span className="text-[8px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded border border-indigo-100 font-bold uppercase">Dependientes</span>
+                                )}
+                                {rates.payroll.usePrepagada && rates.payroll.prepagada > 0 && (
+                                  <span className="text-[8px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded border border-indigo-100 font-bold uppercase">Med. Prepagada</span>
+                                )}
+                                {rates.payroll.useInteresesVivienda && rates.payroll.interesesVivienda > 0 && (
+                                  <span className="text-[8px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded border border-indigo-100 font-bold uppercase">Int. Vivienda</span>
+                                )}
+                                {rates.payroll.usePensionVoluntaria && rates.payroll.pensionVoluntaria > 0 && (
+                                  <span className="text-[8px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded border border-indigo-100 font-bold uppercase">Pens. Voluntaria</span>
+                                )}
+                              </div>
+                            </div>
+                            <span className="font-bold text-rose-700">-{formatCurrency(results.definitive.retefuente)}</span>
+                          </div>
+                          {rates.payroll.useManualRetefuente && (
+                            <p className="px-1 text-[9px] text-amber-600 font-bold italic">
+                              * Aplicado porcentaje manual del {rates.payroll.manualRetefuentePct}%
+                            </p>
+                          )}
                         </div>
                       )}
                       {results.definitive.additionalDeductions > 0 && (
