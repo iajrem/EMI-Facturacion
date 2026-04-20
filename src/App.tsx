@@ -239,6 +239,7 @@ interface Rates {
     billingCutoffDay: number;   // Day of the month for billing cutoff
     nightShiftStart: number;    // Hour when night shift starts (e.g., 19 for 7 PM)
     vacationLastResetDate: string | null; // ISO date of last vacation reset
+    primaLastResetDate: string | null;    // ISO date of last prima reset
     ibcMinimo: boolean;         // If true, IBC is capped at SMMLV if gross > SMMLV
     jobTitle: string;
     useManualRetefuente: boolean;
@@ -372,6 +373,7 @@ const DEFAULT_RATES: Rates = {
     billingCutoffDay: 29,
     nightShiftStart: 19,
     vacationLastResetDate: null,
+    primaLastResetDate: null,
     ibcMinimo: false,
     jobTitle: 'MEDICO CONSULTA 2 MED',
     useManualRetefuente: false,
@@ -789,27 +791,28 @@ const calculatePeriodTotals = (
   const legalDeductions = health + pension + fsp; // ARL is paid by employer in Colombia for employees
 
   // --- Proportional Calculations based on Period History ---
-  const currentEndDate = activePeriod ? new Date(activePeriod.endDate + 'T00:00:00') : new Date();
-  const currentYear = currentEndDate.getFullYear();
-  const currentMonth = currentEndDate.getMonth(); // 0-11
-  const currentSemester = currentMonth < 6 ? 0 : 1; // 0: Jan-Jun, 1: Jul-Dec
-
   const otherPeriods = periods.filter(p => p.id !== selectedPeriodId && p.endDate < (activePeriod?.startDate || ''));
   const sortedOthers = [...otherPeriods].sort((a, b) => b.endDate.localeCompare(a.endDate));
   
-  // Average 6 Months (Semester Reset for Primas)
-  const semesterOthers = sortedOthers.filter(p => {
-    const pDate = new Date(p.endDate + 'T00:00:00');
-    const pSemester = pDate.getMonth() < 6 ? 0 : 1;
-    return pDate.getFullYear() === currentYear && pSemester === currentSemester;
+  // Average 6 Months (Semester Reset for Primas) - Excluding current month as requested
+  const primaResetDate = rates.payroll.primaLastResetDate;
+  const primaOthers = sortedOthers.filter(p => {
+    if (!primaResetDate) return true;
+    return p.startDate >= primaResetDate;
   });
-  const last5Others = semesterOthers.slice(0, 5);
-  const count6 = last5Others.length + (selectedPeriodId ? 1 : 0);
-  const total6 = last5Others.reduce((sum, p) => sum + (p.totalGross || 0), 0) + (selectedPeriodId ? gross : 0);
-  const avg6 = count6 > 0 ? total6 / count6 : 0;
+  const last6OthersPrima = primaOthers.slice(0, 6);
+  const count6Prima = last6OthersPrima.length;
+  const total6Prima = last6OthersPrima.reduce((sum, p) => sum + (p.totalGross || 0), 0);
+  const avg6Prima = count6Prima > 0 ? total6Prima / count6Prima : 0;
   
-  const primaProporcional = avg6 / 12;
-  const cesantiasProporcional = avg6 / 12;
+  // Average for proportional calculation (includes current)
+  const count6Proportional = last6OthersPrima.slice(0, 5).length + (selectedPeriodId ? 1 : 0);
+  const total6Proportional = last6OthersPrima.slice(0, 5).reduce((sum, p) => sum + (p.totalGross || 0), 0) + (selectedPeriodId ? gross : 0);
+  const avg6Proportional = count6Proportional > 0 ? total6Proportional / count6Proportional : 0;
+  
+  const primaProporcional = avg6Proportional / 12;
+  const primaSemestral = avg6Prima * 0.5; // Final total for 6 months (50% of average of last 6 months)
+  const cesantiasProporcional = avg6Proportional / 12;
   const interesesCesantias = cesantiasProporcional * 0.12;
 
   // Average 12 Months (Manual Reset for Vacations)
@@ -877,6 +880,7 @@ const calculatePeriodTotals = (
     net,
     netCash,
     primaProporcional,
+    primaSemestral,
     cesantiasProporcional,
     interesesCesantias,
     vacacionesProporcional,
@@ -906,7 +910,8 @@ const calculatePeriodTotals = (
     totalP,
     totalAVA,
     effectiveDeductionRate,
-    avg6,
+    avg6: avg6Proportional,
+    avg6Prima,
     avg12
   };
 };
@@ -997,6 +1002,7 @@ function MainApp() {
             usePrepagada: updatedRates.payroll.usePrepagada === undefined ? true : updatedRates.payroll.usePrepagada,
             usePensionVoluntaria: updatedRates.payroll.usePensionVoluntaria === undefined ? true : updatedRates.payroll.usePensionVoluntaria,
             useInteresesVivienda: updatedRates.payroll.useInteresesVivienda === undefined ? true : updatedRates.payroll.useInteresesVivienda,
+            primaLastResetDate: updatedRates.payroll.primaLastResetDate || null,
           };
 
           Object.entries(missingFields).forEach(([key, value]) => {
@@ -2562,9 +2568,14 @@ function MainApp() {
                           </button>
                         </div>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-[9px] text-slate-500">{t.startDate} al {t.endDate}</span>
-                        <span className="text-[9px] font-bold text-amber-600">{t.maxHours}h</span>
+                      <div className="flex flex-col gap-0.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[9px] text-slate-500">{t.startDate} al {t.endDate}</span>
+                          <span className="text-[9px] font-bold text-amber-600">{t.maxHours}h</span>
+                        </div>
+                        <div className="text-[8px] font-bold text-amber-500/60 truncate uppercase tracking-tighter">
+                          Periodo: {p.name}
+                        </div>
                       </div>
                     </div>
                   ));
@@ -2644,9 +2655,23 @@ function MainApp() {
                                   </button>
                                 </div>
                               </div>
-                              <div className="flex items-center justify-between text-[8px] text-slate-400">
-                                <span>{t.startDate} - {t.endDate}</span>
-                                <span className="font-bold">{t.maxHours}h</span>
+                              <div className="flex flex-col gap-0.5 text-[8px] text-slate-400">
+                                <div className="flex items-center justify-between">
+                                  <span>{t.startDate} - {t.endDate}</span>
+                                  <span className="font-bold">{t.maxHours}h</span>
+                                </div>
+                                {(() => {
+                                  const assocPeriod = periods.find(p => 
+                                    (t.startDate >= p.startDate && t.startDate <= p.endDate) || 
+                                    (t.endDate >= p.startDate && t.endDate <= p.endDate) ||
+                                    (t.startDate <= p.startDate && t.endDate >= p.endDate)
+                                  );
+                                  return assocPeriod && (
+                                    <div className="text-[7px] font-bold text-indigo-400/70 truncate uppercase tracking-tight">
+                                      Periodo: {assocPeriod.name}
+                                    </div>
+                                  );
+                                })()}
                               </div>
                             </div>
                           ))}
@@ -3116,9 +3141,18 @@ function MainApp() {
                         </label>
                         <div className="flex items-center gap-2">
                           {results.definitive.gross > 0 && rates.payroll.usePrepagada && (
-                            <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">
-                              {((Math.min(rates.payroll.prepagada, 16 * rates.payroll.uvtValue) / results.definitive.gross) * 100).toFixed(1)}%
-                            </span>
+                            <div className="flex flex-col items-end">
+                              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+                                rates.payroll.prepagada > (16 * rates.payroll.uvtValue)
+                                  ? 'bg-amber-50 text-amber-600 border-amber-100'
+                                  : 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                              }`}>
+                                {((Math.min(rates.payroll.prepagada, 16 * rates.payroll.uvtValue) / results.definitive.gross) * 100).toFixed(1)}%
+                              </span>
+                              {rates.payroll.prepagada > (16 * rates.payroll.uvtValue) && (
+                                <span className="text-[7px] text-amber-500 font-bold uppercase">Tope Máx.</span>
+                              )}
+                            </div>
                           )}
                           <input 
                             type="checkbox"
@@ -3155,9 +3189,18 @@ function MainApp() {
                         </label>
                         <div className="flex items-center gap-2">
                           {results.definitive.gross > 0 && rates.payroll.useInteresesVivienda && (
-                            <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">
-                              {((Math.min(rates.payroll.interesesVivienda, 100 * rates.payroll.uvtValue) / results.definitive.gross) * 100).toFixed(1)}%
-                            </span>
+                            <div className="flex flex-col items-end">
+                              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+                                rates.payroll.interesesVivienda > (100 * rates.payroll.uvtValue)
+                                  ? 'bg-amber-50 text-amber-600 border-amber-100'
+                                  : 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                              }`}>
+                                {((Math.min(rates.payroll.interesesVivienda, 100 * rates.payroll.uvtValue) / results.definitive.gross) * 100).toFixed(1)}%
+                              </span>
+                              {rates.payroll.interesesVivienda > (100 * rates.payroll.uvtValue) && (
+                                <span className="text-[7px] text-amber-500 font-bold uppercase">Tope Máx.</span>
+                              )}
+                            </div>
                           )}
                           <input 
                             type="checkbox"
@@ -3194,9 +3237,18 @@ function MainApp() {
                         </label>
                         <div className="flex items-center gap-2">
                           {results.definitive.gross > 0 && rates.payroll.usePensionVoluntaria && (
-                            <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">
-                              {((Math.min(rates.payroll.pensionVoluntaria, results.definitive.gross * 0.3) / results.definitive.gross) * 100).toFixed(1)}%
-                            </span>
+                            <div className="flex flex-col items-end">
+                              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+                                rates.payroll.pensionVoluntaria > (results.definitive.gross * 0.3)
+                                  ? 'bg-amber-50 text-amber-600 border-amber-100'
+                                  : 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                              }`}>
+                                {((Math.min(rates.payroll.pensionVoluntaria, results.definitive.gross * 0.3) / results.definitive.gross) * 100).toFixed(1)}%
+                              </span>
+                              {rates.payroll.pensionVoluntaria > (results.definitive.gross * 0.3) && (
+                                <span className="text-[7px] text-amber-500 font-bold uppercase">Tope Máx.</span>
+                              )}
+                            </div>
                           )}
                           <input 
                             type="checkbox"
@@ -3246,16 +3298,30 @@ function MainApp() {
                               <input 
                                 type="number"
                                 step="0.01"
-                                value={rates.payroll.manualRetefuentePct}
-                                onChange={(e) => setRates({
-                                  ...rates,
-                                  payroll: { ...rates.payroll, manualRetefuentePct: Number(e.target.value) }
-                                })}
+                                key={`manual-rete-${rates.payroll.manualRetefuentePct}`}
+                                defaultValue={rates.payroll.manualRetefuentePct}
+                                onBlur={(e) => {
+                                  const val = Number(e.target.value);
+                                  if (!isNaN(val)) {
+                                    setRates(prev => ({
+                                      ...prev,
+                                      payroll: { ...prev.payroll, manualRetefuentePct: val }
+                                    }));
+                                  }
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    (e.target as HTMLInputElement).blur();
+                                  }
+                                }}
                                 className="w-16 bg-transparent text-right text-xs font-bold text-indigo-700 outline-none"
                               />
                               <span className="text-xs font-bold text-indigo-700">%</span>
                             </div>
                           </div>
+                          <p className="text-[8px] text-indigo-400 mt-1 italic">
+                            * Este porcentaje se mantendrá fijo para todos tus cálculos hasta que lo cambies.
+                          </p>
                           <div className="flex items-center justify-between text-indigo-800">
                             <span className="text-[10px] font-medium">Equivale a:</span>
                             <span className="text-xs font-bold">{formatCurrency(results.all.retefuente)}</span>
@@ -3277,7 +3343,7 @@ function MainApp() {
                     <div className="h-px bg-slate-200 my-2" />
                     <div>
                       <label className="block text-[10px] font-bold text-indigo-500 uppercase mb-1 flex items-center gap-1">
-                        Promedio Facturado 12 Meses ($)
+                        Promedio Vacaciones (12 Meses)
                         <button 
                           onClick={() => setShowHelp(HELP_CONTENT.avgBilling)}
                           className="hover:text-indigo-600 transition-colors"
@@ -3304,8 +3370,8 @@ function MainApp() {
                       <p className="text-[9px] text-indigo-400 mt-1 italic flex items-center justify-between">
                         <span>
                           {rates.payroll.vacationLastResetDate 
-                            ? `Reiniciado el: ${rates.payroll.vacationLastResetDate}` 
-                            : "Calculado automáticamente (últimos 12 meses)"}
+                            ? `Entregado el: ${rates.payroll.vacationLastResetDate}` 
+                            : "Cálculo automático (12 meses)"}
                         </span>
                         {rates.payroll.vacationLastResetDate && (
                           <button
@@ -3325,7 +3391,7 @@ function MainApp() {
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-indigo-500 uppercase mb-1 flex items-center gap-1">
-                        Promedio Facturado 6 Meses (Semestre) ($)
+                        Prima Semestral (6 Meses)
                         <button 
                           onClick={() => setShowHelp(HELP_CONTENT.avgBilling)}
                           className="hover:text-indigo-600 transition-colors"
@@ -3333,10 +3399,43 @@ function MainApp() {
                           <Info className="w-3 h-3 text-indigo-400" />
                         </button>
                       </label>
-                      <div className="w-full bg-indigo-50 border border-indigo-100 rounded-xl py-2 px-3 text-sm font-mono text-indigo-700">
-                        {formatCurrency(results.all.avg6)}
+                      <div className="w-full bg-indigo-50 border border-indigo-100 rounded-xl py-2 px-3 text-sm font-mono text-indigo-700 flex items-center justify-between">
+                        <span>{formatCurrency(results.all.primaSemestral)}</span>
+                        <button
+                          onClick={() => {
+                            const today = new Date().toISOString().split('T')[0];
+                            setRates({
+                              ...rates,
+                              payroll: { ...rates.payroll, primaLastResetDate: today }
+                            });
+                            showToast("Ciclo de prima reiniciado correctamente");
+                          }}
+                          className="text-[9px] bg-indigo-600 text-white px-2 py-1 rounded-lg hover:bg-indigo-700 transition-colors uppercase font-bold"
+                        >
+                          Reiniciar Ciclo
+                        </button>
                       </div>
-                      <p className="text-[9px] text-indigo-400 mt-1 italic">Calculado automáticamente del historial</p>
+                      <p className="text-[9px] text-indigo-400 mt-1 italic flex items-center justify-between">
+                        <span>
+                          {rates.payroll.primaLastResetDate 
+                            ? `Entregado el: ${rates.payroll.primaLastResetDate}` 
+                            : "Cálculo promedio (últimos 6 meses)"}
+                        </span>
+                        {rates.payroll.primaLastResetDate && (
+                          <button
+                            onClick={() => {
+                              setRates({
+                                ...rates,
+                                payroll: { ...rates.payroll, primaLastResetDate: null }
+                              });
+                              showToast("Cálculo de prima vuelto a automático");
+                            }}
+                            className="text-indigo-600 hover:underline font-bold"
+                          >
+                            Limpiar
+                          </button>
+                        )}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -4663,9 +4762,17 @@ function MainApp() {
                         <span className="text-sm font-medium text-slate-600">Sueldo Básico (Turnos)</span>
                         <span className="font-bold text-slate-800">{formatCurrency(results.definitive.gross)}</span>
                       </div>
-                      <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                        <span className="text-sm font-medium text-slate-600">Prima Proporcional</span>
-                        <span className="font-bold text-slate-800">{formatCurrency(results.definitive.primaProporcional)}</span>
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                          <span className="text-sm font-medium text-slate-600">Prima Proporcional</span>
+                          <span className="font-bold text-slate-800">{formatCurrency(results.definitive.primaProporcional)}</span>
+                        </div>
+                        {results.definitive.primaSemestral > 0 && (
+                          <div className="flex items-center justify-between px-4 text-[10px] text-indigo-500 font-bold italic">
+                            <span>Estimado a Recibir en Junio/Dic (50% promedio):</span>
+                            <span>{formatCurrency(results.definitive.primaSemestral)}</span>
+                          </div>
+                        )}
                       </div>
                       <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
                         <span className="text-sm font-medium text-slate-600">Cesantías Proporcionales</span>
@@ -4719,7 +4826,14 @@ function MainApp() {
                         <div className="space-y-2">
                           <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
                             <div className="flex flex-col">
-                              <span className="text-sm font-medium text-slate-600">Retención en la Fuente</span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-medium text-slate-600">Retención en la Fuente</span>
+                                {results.definitive.gross > 0 && (
+                                  <span className="text-[10px] font-bold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100">
+                                    {((results.definitive.retefuente / results.definitive.gross) * 100).toFixed(2)}%
+                                  </span>
+                                )}
+                              </div>
                               <div className="flex flex-wrap gap-2 mt-1">
                                 {rates.payroll.dependents && (
                                   <span className="text-[8px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded border border-indigo-100 font-bold uppercase">Dependientes</span>
