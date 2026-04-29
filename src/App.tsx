@@ -52,6 +52,7 @@ import {
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
+import { utils, writeFile } from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   auth, 
@@ -245,11 +246,11 @@ interface Rates {
     primaLastResetDate: string | null;    // ISO date of last prima reset
     ibcMinimo: boolean;         // If true, IBC is capped at SMMLV if gross > SMMLV
     jobTitle: string;
-    useManualRetefuente: boolean;
-    manualRetefuentePct: number;
     usePrepagada: boolean;
     usePensionVoluntaria: boolean;
     useInteresesVivienda: boolean;
+    useManualRetefuente: boolean;
+    manualRetefuentePct: number;
   };
 }
 
@@ -381,11 +382,11 @@ const DEFAULT_RATES: Rates = {
     primaLastResetDate: null,
     ibcMinimo: false,
     jobTitle: 'MEDICO CONSULTA 2 MED',
-    useManualRetefuente: false,
-    manualRetefuentePct: 0,
     usePrepagada: true,
     usePensionVoluntaria: true,
     useInteresesVivienda: true,
+    useManualRetefuente: false,
+    manualRetefuentePct: 0,
   }
 };
 
@@ -822,6 +823,57 @@ const calculatePeriodTotals = (
   
   const legalDeductions = health + pension + fsp; // ARL is paid by employer in Colombia for employees
 
+  // --- Retefuente Calculation (Colombian Tax - Art 383) ---
+  const uvtValue = r.payroll.uvtValue;
+  const netIncome = gross - legalDeductions;
+  
+  // 1. Deducciones (Dependientes, Prepagada, Intereses Vivienda, Pensión Voluntaria)
+  const dedDependents = r.payroll.dependents ? Math.min(gross * 0.1, 32 * uvtValue) : 0;
+  const dedPrepagada = r.payroll.usePrepagada ? Math.min(r.payroll.prepagada, 16 * uvtValue) : 0;
+  const dedInteresesVivienda = r.payroll.useInteresesVivienda ? Math.min(r.payroll.interesesVivienda, 100 * uvtValue) : 0;
+  // Pensión voluntaria is capped at 30% of gross and a yearly limit of 3800 UVT (approx 316.67 UVT monthly)
+  const dedPensionVol = r.payroll.usePensionVoluntaria ? Math.min(r.payroll.pensionVoluntaria, gross * 0.3, (3800 * uvtValue) / 12) : 0;
+  
+  const totalDeductionsBeforeExempt = dedDependents + dedPrepagada + dedInteresesVivienda + dedPensionVol;
+  
+  // 2. Renta Exenta del 25% (Art 206 Num 10)
+  // Se calcula sobre (Ingreso Neto - Deducciones)
+  const baseForExempt25 = Math.max(0, netIncome - totalDeductionsBeforeExempt);
+  // Capped at 790 UVT per year (approx 65.83 UVT monthly)
+  const exempt25 = Math.min(baseForExempt25 * 0.25, (790 * uvtValue) / 12);
+  
+  const totalDeductionsAndExemptions = totalDeductionsBeforeExempt + exempt25;
+  
+  // 3. Limitación del 40% (Art 336)
+  // La suma de deducciones y rentas exentas no puede superar el 40% del ingreso neto
+  const cap40Percent = netIncome * 0.40;
+  const finalDeductionsAndExemptions = Math.min(totalDeductionsAndExemptions, cap40Percent);
+  
+  const baseGravableFinal = Math.max(0, netIncome - finalDeductionsAndExemptions);
+  const baseUVT = baseGravableFinal / uvtValue;
+  
+  let retefuente = 0;
+  if (r.payroll.useManualRetefuente) {
+    retefuente = gross * (r.payroll.manualRetefuentePct / 100);
+  } else {
+    // Tabla Retefuente Art. 383
+    if (baseUVT <= 95) {
+      retefuente = 0;
+    } else if (baseUVT <= 150) {
+      retefuente = (baseUVT - 95) * 0.19 * uvtValue;
+    } else if (baseUVT <= 360) {
+      retefuente = ((baseUVT - 150) * 0.28 + 10) * uvtValue;
+    } else if (baseUVT <= 640) {
+      retefuente = ((baseUVT - 360) * 0.33 + 69) * uvtValue;
+    } else if (baseUVT <= 945) {
+      retefuente = ((baseUVT - 640) * 0.35 + 162) * uvtValue;
+    } else if (baseUVT <= 2300) {
+      retefuente = ((baseUVT - 945) * 0.37 + 268) * uvtValue;
+    } else {
+      retefuente = ((baseUVT - 2300) * 0.39 + 770) * uvtValue;
+    }
+  }
+
   // --- Proportional Calculations based on Period History ---
   const currentPeriod = periods.find(p => p.id === selectedPeriodId);
   const otherPeriods = periods.filter(p => {
@@ -870,39 +922,7 @@ const calculatePeriodTotals = (
   const avg12FromHistory = count12 > 0 ? total12 / count12 : 0;
   const avg12 = avg12FromHistory > 0 ? avg12FromHistory : (rates.payroll.avgBilling12Months || 0);
   const vacacionesProporcional = avg12 / 24;
-
-  // --- Retefuente ---
-  const uvt = rates.payroll.uvtValue;
-  const totalIncomeForTax = gross; 
-  const netIncome = totalIncomeForTax - legalDeductions;
   
-  const dedDependents = rates.payroll.dependents ? Math.min(totalIncomeForTax * 0.1, 32 * uvt) : 0;
-  const dedPrepagada = (rates.payroll.usePrepagada !== false) ? Math.min(rates.payroll.prepagada, 16 * uvt) : 0;
-  const dedInteresesVivienda = (rates.payroll.useInteresesVivienda !== false) ? Math.min(rates.payroll.interesesVivienda, 100 * uvt) : 0;
-  const dedPensionVol = (rates.payroll.usePensionVoluntaria !== false) ? Math.min(rates.payroll.pensionVoluntaria, totalIncomeForTax * 0.3, 3800 * uvt / 12) : 0;
-  
-  const subtotalForExempt25 = netIncome - dedDependents - dedPrepagada - dedInteresesVivienda - dedPensionVol;
-  const exempt25 = Math.min(subtotalForExempt25 * 0.25, 65.8 * uvt);
-  
-  const totalDeductionsAndExemptions = dedDependents + dedPrepagada + dedInteresesVivienda + dedPensionVol + exempt25;
-  const cap40Percent = Math.min(netIncome * 0.4, 111.6 * uvt);
-  const finalDeductionsAndExemptions = Math.min(totalDeductionsAndExemptions, cap40Percent);
-  
-  const baseGravableFinal = netIncome - finalDeductionsAndExemptions;
-  const baseUVT = baseGravableFinal / uvt;
-  
-  let retefuente = 0;
-  if (rates.payroll.useManualRetefuente) {
-    retefuente = gross * (rates.payroll.manualRetefuentePct / 100);
-  } else if (baseUVT > 95) {
-    if (baseUVT <= 150) retefuente = (baseUVT - 95) * 0.19 * uvt;
-    else if (baseUVT <= 360) retefuente = ((baseUVT - 150) * 0.28 + 10) * uvt;
-    else if (baseUVT <= 640) retefuente = ((baseUVT - 360) * 0.33 + 69) * uvt;
-    else if (baseUVT <= 945) retefuente = ((baseUVT - 640) * 0.35 + 162) * uvt;
-    else if (baseUVT <= 2300) retefuente = ((baseUVT - 945) * 0.37 + 268) * uvt;
-    else retefuente = ((baseUVT - 2300) * 0.39 + 770) * uvt;
-  }
-
   const totalDeductions = legalDeductions + sumAdditionalDeductions + retefuente;
   const totalGrossWithBenefits = gross + primaProporcional + cesantiasProporcional + interesesCesantias + vacacionesProporcional;
   const net = totalGrossWithBenefits - totalDeductions;
@@ -918,7 +938,6 @@ const calculatePeriodTotals = (
     arl,
     caja,
     fsp,
-    retefuente,
     additionalDeductions: sumAdditionalDeductions,
     totalDeductions,
     net,
@@ -1092,13 +1111,11 @@ function MainApp() {
           }
 
           // Migration: Add missing fields if they don't exist
-          const missingFields = {
-            useManualRetefuente: false,
-            manualRetefuentePct: updatedRates.payroll.manualRetefuentePct || 0,
-            usePrepagada: updatedRates.payroll.usePrepagada === undefined ? true : updatedRates.payroll.usePrepagada,
-            usePensionVoluntaria: updatedRates.payroll.usePensionVoluntaria === undefined ? true : updatedRates.payroll.usePensionVoluntaria,
-            useInteresesVivienda: updatedRates.payroll.useInteresesVivienda === undefined ? true : updatedRates.payroll.useInteresesVivienda,
-            primaLastResetDate: updatedRates.payroll.primaLastResetDate || null,
+          const missingFields: Record<string, any> = {
+            usePrepagada: true,
+            usePensionVoluntaria: true,
+            useInteresesVivienda: true,
+            primaLastResetDate: null,
           };
 
           Object.entries(missingFields).forEach(([key, value]) => {
@@ -2455,6 +2472,90 @@ function MainApp() {
     });
   };
 
+  const exportToExcel = () => {
+    const period = periods.find(p => p.id === selectedPeriodId);
+    const baseRecords = viewingArchive ? viewingArchive.records : records;
+    const periodName = period?.name || 'Extracto de Pago';
+    
+    // 1. Resumen de Encabezado
+    const headerData = [
+      ['EXTRACTO TÉCNICO DE PAGO'],
+      ['Liquidación oficial de honorarios y prestaciones'],
+      [''],
+      ['Periodo:', periodName],
+      ['Fecha Generación:', new Date().toLocaleString()],
+      ['Trisemanas Relacionadas:', trisemanas.filter(t => 
+        (t.startDate <= (period?.endDate || '') && t.endDate >= (period?.startDate || ''))
+      ).map(t => `${t.startDate} al ${t.endDate}`).join(', ') || 'N/A'],
+      [''],
+      ['RESUMEN DE RESULTADOS'],
+      ['Concepto', 'Cantidad/Unidad', 'Valor Bruto', 'Deducciones', 'Neto'],
+      ['Consulta y Horas Libres', `${(results.all.hoursBreakdown.day + results.all.hoursBreakdown.night + results.all.hoursBreakdown.holidayDay + results.all.hoursBreakdown.holidayNight).toFixed(1)}h`, formatCurrency(results.all.grossBreakdown.consultationBase), '', ''],
+      ['AVA y Virtuales', `${(results.all.avaBreakdown.day + results.all.avaBreakdown.night + results.all.avaBreakdown.holidayDay + results.all.avaBreakdown.holidayNight).toFixed(1)}h`, formatCurrency(results.all.grossBreakdown.ava), '', ''],
+      ['Productividad Pacientes', `${results.all.totalMonthlyPatients} Pac`, formatCurrency(results.all.grossBreakdown.service), '', ''],
+      ['TOTALES', '', formatCurrency(results.all.gross), formatCurrency(results.all.totalDeductions), formatCurrency(results.all.netCash)],
+    ];
+
+    const ws_header = utils.aoa_to_sheet(headerData);
+
+    // 2. Discriminación de Horas, Pacientes y VALORES
+    const detailedData = [
+      ['DISCRIMINACIÓN DETALLADA'],
+      ['Categoría', 'Diurna', 'Nocturna', 'Festiva Diu', 'Festiva Noc', 'Total'],
+      ['Horas Consulta', results.all.hoursBreakdown.day.toFixed(1), results.all.hoursBreakdown.night.toFixed(1), results.all.hoursBreakdown.holidayDay.toFixed(1), results.all.hoursBreakdown.holidayNight.toFixed(1), (results.all.hoursBreakdown.day + results.all.hoursBreakdown.night + results.all.hoursBreakdown.holidayDay + results.all.hoursBreakdown.holidayNight).toFixed(1)],
+      ['Valores Consulta', formatCurrency(results.all.hoursValues.day), formatCurrency(results.all.hoursValues.night), formatCurrency(results.all.hoursValues.holidayDay), formatCurrency(results.all.hoursValues.holidayNight), formatCurrency(results.all.grossBreakdown.consultationBase)],
+      ['Horas AVA/Virt', results.all.avaBreakdown.day.toFixed(1), results.all.avaBreakdown.night.toFixed(1), results.all.avaBreakdown.holidayDay.toFixed(1), results.all.avaBreakdown.holidayNight.toFixed(1), (results.all.avaBreakdown.day + results.all.avaBreakdown.night + results.all.avaBreakdown.holidayDay + results.all.avaBreakdown.holidayNight).toFixed(1)],
+      ['Valores AVA/Virt', formatCurrency(results.all.avaValues.day), formatCurrency(results.all.avaValues.night), formatCurrency(results.all.avaValues.holidayDay), formatCurrency(results.all.avaValues.holidayNight), formatCurrency(results.all.grossBreakdown.ava)],
+      ['Unidades Pacientes', results.all.patientsBreakdown.day, results.all.patientsBreakdown.night, results.all.patientsBreakdown.holidayDay, results.all.patientsBreakdown.holidayNight, results.all.totalMonthlyPatients],
+      ['Valores Pacientes', formatCurrency(results.all.patientsValues.day), formatCurrency(results.all.patientsValues.night), formatCurrency(results.all.patientsValues.holidayDay), formatCurrency(results.all.patientsValues.holidayNight), formatCurrency(results.all.grossBreakdown.service)],
+      [''],
+      ['DEDUCCIONES LEGALES'],
+      ['Concepto', 'Valor', 'Observación'],
+      ['Salud (4%)', `-${formatCurrency(results.all.taxBreakdown.health)}`, 'Deducción de Ley'],
+      ['Pensión (4%)', `-${formatCurrency(results.all.taxBreakdown.pension)}`, 'Deducción de Ley'],
+      ['Fondo Solidaridad', `-${formatCurrency(results.all.taxBreakdown.fsp)}`, results.all.taxBreakdown.fsp > 0 ? 'Aplicado por IBC > 4 SMMLV' : 'No Aplica'],
+      ['Retención en la Fuente', `-${formatCurrency(results.all.taxBreakdown.retefuente)}`, rates.payroll.useManualRetefuente ? `Manual (${rates.payroll.manualRetefuentePct}%)` : 'Automático Ley'],
+      ['Otras Deducciones', `-${formatCurrency(results.all.additionalDeductions)}`, 'Ajustes Manuales'],
+      ['TOTAL DEDUCCIONES', `-${formatCurrency(results.all.totalDeductions)}`, ''],
+      [''],
+      ['PRESTACIONES SOCIALES ACUMULADAS'],
+      ['Concepto', 'Valor Mensual (Proporcional)', 'Observación'],
+      ['Prima de Servicios', formatCurrency(results.all.primaProporcional), 'Provisionada mensual'],
+      ['Cesantías', formatCurrency(results.all.cesantiasProporcional), 'Provisionada mensual'],
+      ['Intereses Cesantías', formatCurrency(results.all.interesesCesantias), '1% mensual de cesantías'],
+      ['Vacaciones Proporcionales', formatCurrency(results.all.vacacionesProporcional), '1.25 días aprox por mes'],
+    ];
+
+    const ws_details = utils.aoa_to_sheet(detailedData);
+
+    // 3. Listado de Turnos
+    const turnsHeaders = [['FECHA', 'HORARIO', 'TIPO', 'HRS', 'PACIENTES', 'VALOR BRUTO']];
+    const turnsData = baseRecords.map(r => {
+      const isAVAMain = r.isAVAShift || r.isVirtualShift || (Object.values(r.ava || {}).some(v => (v as number) > 0) && Object.values(r.hours || {}).every(v => v === 0));
+      const dist = results.all.recordDistributions[r.id];
+      const val = calculateShiftValue({ ...r, isAVAShift: isAVAMain }, results.calculationRates, dist);
+      const totalHours = (dist?.ord.day || 0) + (dist?.ord.night || 0) + (dist?.ord.holidayDay || 0) + (dist?.ord.holidayNight || 0) +
+                         (dist?.extra.day || 0) + (dist?.extra.night || 0) + (dist?.extra.holidayDay || 0) + (dist?.extra.holidayNight || 0);
+      return [
+        r.date, 
+        `${r.startTime}-${r.endTime}`, 
+        isAVAMain ? 'AVA/Virt' : 'Consul.', 
+        totalHours.toFixed(1), 
+        r.applyPatients ? (r.patients.day + r.patients.night + r.patients.holidayDay + r.patients.holidayNight) : 0, 
+        val.base + val.service + val.avaVirtual
+      ];
+    });
+
+    const ws_turns = utils.aoa_to_sheet([...turnsHeaders, ...turnsData]);
+
+    const wb = utils.book_new();
+    utils.book_append_sheet(wb, ws_header, 'Resumen');
+    utils.book_append_sheet(wb, ws_details, 'Detalle');
+    utils.book_append_sheet(wb, ws_turns, 'Bitácora');
+
+    writeFile(wb, `Extracto_${periodName.replace(/\s+/g, '_')}.xlsx`);
+  };
+
   const exportToPDF = () => {
     const doc = new jsPDF();
     const period = periods.find(p => p.id === selectedPeriodId);
@@ -2479,8 +2580,8 @@ function MainApp() {
     const headerInfo = [
       `Periodo: ${periodName}`,
       `Rango: ${dateRange}`,
+      `Trisemanas: ${trisemanas.filter(t => (t.startDate <= (period?.endDate || '') && t.endDate >= (period?.startDate || ''))).map(t => `${t.startDate} a ${t.endDate}`).join(', ') || 'N/A'}`,
       `Cargo: ${rates.payroll.jobTitle}`,
-      `Usuario: ${user?.email || 'N/A'}`,
       `Generado: ${new Date().toLocaleString()}`
     ];
     headerInfo.forEach((text, i) => doc.text(text, 14, 35 + (i * 5)));
@@ -2512,21 +2613,26 @@ function MainApp() {
     // 2. Discriminación de Horas
     const nextY = (doc as any).lastAutoTable.finalY + 10;
     doc.setFontSize(12);
-    doc.text('2. DISCRIMINACIÓN DE TURNOS', 14, nextY);
+    doc.text('2. DISCRIMINACIÓN DE TURNOS Y VALORES', 14, nextY);
     
     const hourData = [
-      ['Tipo', 'Diurnas', 'Nocturnas', 'Festivas Diu', 'Festivas Noc', 'Totales'],
-      ['Consulta', results.definitive.hoursBreakdown.day.toFixed(1), results.definitive.hoursBreakdown.night.toFixed(1), results.definitive.hoursBreakdown.holidayDay.toFixed(1), results.definitive.hoursBreakdown.holidayNight.toFixed(1), (results.definitive.hoursBreakdown.day + results.definitive.hoursBreakdown.night + results.definitive.hoursBreakdown.holidayDay + results.definitive.hoursBreakdown.holidayNight).toFixed(1)],
-      ['AVA / Virt', results.definitive.avaBreakdown.day.toFixed(1), results.definitive.avaBreakdown.night.toFixed(1), results.definitive.avaBreakdown.holidayDay.toFixed(1), results.definitive.avaBreakdown.holidayNight.toFixed(1), (results.definitive.avaBreakdown.day + results.definitive.avaBreakdown.night + results.definitive.avaBreakdown.holidayDay + results.definitive.avaBreakdown.holidayNight).toFixed(1)],
+      ['Tipo / Categoría', 'Diurnas', 'Nocturnas', 'Festivas Diu', 'Festivas Noc', 'Totales'],
+      ['Horas Consulta', results.definitive.hoursBreakdown.day.toFixed(1), results.definitive.hoursBreakdown.night.toFixed(1), results.definitive.hoursBreakdown.holidayDay.toFixed(1), results.definitive.hoursBreakdown.holidayNight.toFixed(1), (results.definitive.hoursBreakdown.day + results.definitive.hoursBreakdown.night + results.definitive.hoursBreakdown.holidayDay + results.definitive.hoursBreakdown.holidayNight).toFixed(1)],
+      ['Valor Consulta', formatCurrency(results.definitive.hoursValues.day), formatCurrency(results.definitive.hoursValues.night), formatCurrency(results.definitive.hoursValues.holidayDay), formatCurrency(results.definitive.hoursValues.holidayNight), formatCurrency(results.definitive.grossBreakdown.consultationBase)],
+      ['Horas AVA / Virt', results.definitive.avaBreakdown.day.toFixed(1), results.definitive.avaBreakdown.night.toFixed(1), results.definitive.avaBreakdown.holidayDay.toFixed(1), results.definitive.avaBreakdown.holidayNight.toFixed(1), (results.definitive.avaBreakdown.day + results.definitive.avaBreakdown.night + results.definitive.avaBreakdown.holidayDay + results.definitive.avaBreakdown.holidayNight).toFixed(1)],
+      ['Valor AVA / Virt', formatCurrency(results.definitive.avaValues.day), formatCurrency(results.definitive.avaValues.night), formatCurrency(results.definitive.avaValues.holidayDay), formatCurrency(results.definitive.avaValues.holidayNight), formatCurrency(results.definitive.grossBreakdown.ava)],
+      ['Uni. Pacientes', results.definitive.patientsBreakdown.day, results.definitive.patientsBreakdown.night, results.definitive.patientsBreakdown.holidayDay, results.definitive.patientsBreakdown.holidayNight, results.all.totalMonthlyPatients],
+      ['Valor Pacientes', formatCurrency(results.definitive.patientsValues.day), formatCurrency(results.definitive.patientsValues.night), formatCurrency(results.definitive.patientsValues.holidayDay), formatCurrency(results.definitive.patientsValues.holidayNight), formatCurrency(results.definitive.grossBreakdown.service)],
     ];
 
     (doc as any).autoTable({
       startY: nextY + 3,
       head: [hourData[0]],
       body: hourData.slice(1),
-      theme: 'striped',
+      theme: 'grid',
       headStyles: { fillColor: [51, 65, 85] },
-      styles: { fontSize: 8 }
+      styles: { fontSize: 7, halign: 'center' },
+      columnStyles: { 0: { halign: 'left', fontStyle: 'bold' } }
     });
 
     // 3. Deducciones
@@ -2538,8 +2644,8 @@ function MainApp() {
       ['Concepto', 'Base / Porcentaje', 'Valor'],
       ['Aporte Salud', `4% de ${formatCurrency(results.definitive.ibc)}`, `-${formatCurrency(results.definitive.taxBreakdown.health)}`],
       ['Aporte Pensión', `4% de ${formatCurrency(results.definitive.ibc)}`, `-${formatCurrency(results.definitive.taxBreakdown.pension)}`],
-      ['Retención en la Fuente', 'Según procedimiento', `-${formatCurrency(results.definitive.retefuente)}`],
       ['Fondo Solidaridad', results.definitive.taxBreakdown.fsp > 0 ? 'Aplicado' : 'N/A', `-${formatCurrency(results.definitive.taxBreakdown.fsp)}`],
+      ['Retefuente', rates.payroll.useManualRetefuente ? `${rates.payroll.manualRetefuentePct}%` : 'Tabla Art. 383', `-${formatCurrency(results.definitive.taxBreakdown.retefuente)}`],
       ['Otras Deducciones', 'Manuales', `-${formatCurrency(results.definitive.taxBreakdown.additionalDeductions)}`],
       ['TOTAL DEDUCCIONES', '', `-${formatCurrency(results.definitive.totalDeductions)}`],
     ];
@@ -3798,10 +3904,21 @@ function MainApp() {
                         type="checkbox"
                         checked={rates.payroll.dependents}
                         disabled={isConfigLocked}
-                        onChange={(e) => setRates({
-                          ...rates,
-                          payroll: { ...rates.payroll, dependents: e.target.checked }
-                        })}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setConfirmDialog({
+                            title: 'Confirmar Dependientes',
+                            message: `¿Desea ${checked ? 'activar' : 'desactivar'} la deducción por dependientes económicos (10%)?`,
+                            onConfirm: () => {
+                              setRates({
+                                ...rates,
+                                payroll: { ...rates.payroll, dependents: checked }
+                              });
+                              setConfirmDialog(null);
+                              showToast(`Deducción por dependientes ${checked ? 'activada' : 'desactivada'}`);
+                            }
+                          });
+                        }}
                         className={`w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 ${isConfigLocked ? 'cursor-not-allowed opacity-50' : ''}`}
                       />
                     </div>
@@ -3861,10 +3978,20 @@ function MainApp() {
                             type="checkbox"
                             checked={rates.payroll.usePrepagada}
                             disabled={isConfigLocked}
-                            onChange={(e) => setRates(prev => ({
-                              ...prev,
-                              payroll: { ...prev.payroll, usePrepagada: e.target.checked }
-                            }))}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setConfirmDialog({
+                                title: 'Confirmar Medicina Prepagada',
+                                message: `¿Desea ${checked ? 'activar' : 'desactivar'} la deducción por Medicina Prepagada / Seguros de Salud?`,
+                                onConfirm: () => {
+                                  setRates(prev => ({
+                                    ...prev,
+                                    payroll: { ...prev.payroll, usePrepagada: checked }
+                                  }));
+                                  setConfirmDialog(null);
+                                }
+                              });
+                            }}
                             className={`w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 ${isConfigLocked ? 'cursor-not-allowed opacity-50' : ''}`}
                           />
                         </div>
@@ -3913,10 +4040,20 @@ function MainApp() {
                             type="checkbox"
                             checked={rates.payroll.useInteresesVivienda}
                             disabled={isConfigLocked}
-                            onChange={(e) => setRates(prev => ({
-                              ...prev,
-                              payroll: { ...prev.payroll, useInteresesVivienda: e.target.checked }
-                            }))}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setConfirmDialog({
+                                title: 'Confirmar Intereses Vivienda',
+                                message: `¿Desea ${checked ? 'activar' : 'desactivar'} la deducción por intereses de préstamos de vivienda (UPR)?`,
+                                onConfirm: () => {
+                                  setRates(prev => ({
+                                    ...prev,
+                                    payroll: { ...prev.payroll, useInteresesVivienda: checked }
+                                  }));
+                                  setConfirmDialog(null);
+                                }
+                              });
+                            }}
                             className={`w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 ${isConfigLocked ? 'cursor-not-allowed opacity-50' : ''}`}
                           />
                         </div>
@@ -3965,10 +4102,20 @@ function MainApp() {
                             type="checkbox"
                             checked={rates.payroll.usePensionVoluntaria}
                             disabled={isConfigLocked}
-                            onChange={(e) => setRates({
-                              ...rates,
-                              payroll: { ...rates.payroll, usePensionVoluntaria: e.target.checked }
-                            })}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setConfirmDialog({
+                                title: 'Confirmar Pensión Voluntaria',
+                                message: `¿Desea ${checked ? 'activar' : 'desactivar'} la deducción por aportes a Pensión Voluntaria?`,
+                                onConfirm: () => {
+                                  setRates(prev => ({
+                                    ...prev,
+                                    payroll: { ...prev.payroll, usePensionVoluntaria: checked }
+                                  }));
+                                  setConfirmDialog(null);
+                                }
+                              });
+                            }}
                             className={`w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 ${isConfigLocked ? 'cursor-not-allowed opacity-50' : ''}`}
                           />
                         </div>
@@ -3988,90 +4135,121 @@ function MainApp() {
                       />
                     </div>
                     <div className="h-px bg-slate-200 my-2" />
-                    <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex flex-col">
-                          <span className="text-[10px] font-bold text-indigo-600 uppercase">Retención en Fuente</span>
-                          <span className="text-[9px] text-indigo-400 italic">Manual o Automática</span>
-                        </div>
-                        <input 
-                          type="checkbox"
-                          checked={rates.payroll.useManualRetefuente}
-                          disabled={isConfigLocked}
-                          onChange={(e) => {
-                            const checked = e.target.checked;
-                            if (checked) {
-                              setConfirmDialog({
-                                title: "¿Habilitar Retefuente Manual?",
-                                message: "Esto ignorará el cálculo automático de Ley y aplicará un porcentaje fijo sobre el total bruto. ¿Deseas continuar?",
-                                confirmLabel: "Sí, Habilitar",
-                                onConfirm: () => {
-                                  const pctStr = prompt("Ingresa el porcentaje manual deseado (ej: 4, 10):", String(rates.payroll.manualRetefuentePct || 0));
-                                  const pct = parseFloat(pctStr || "0");
-                                  if (!isNaN(pct)) {
-                                    setRates({
-                                      ...rates,
-                                      payroll: { ...rates.payroll, useManualRetefuente: true, manualRetefuentePct: pct }
-                                    });
-                                    showToast(`Retefuente manual establecida en ${pct}%`);
-                                  }
-                                }
-                              });
-                            } else {
-                              setRates({
-                                ...rates,
-                                payroll: { ...rates.payroll, useManualRetefuente: false }
-                              });
-                            }
-                          }}
-                          className="w-4 h-4 rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
-                        />
-                      </div>
-                      
-                      {rates.payroll.useManualRetefuente ? (
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between bg-white p-2 rounded-lg border border-indigo-100">
-                            <span className="text-[10px] font-bold text-slate-500 uppercase">% Fijo Mensual</span>
-                            <div className="flex items-center gap-1">
-                              <input 
-                                type="number"
-                                step="0.01"
-                                value={rates.payroll.manualRetefuentePct}
-                                disabled={isConfigLocked}
-                                onChange={(e) => {
-                                  const val = e.target.value === '' ? 0 : Number(e.target.value);
-                                  setRates(prev => ({
-                                    ...prev,
-                                    payroll: { ...prev.payroll, manualRetefuentePct: val }
-                                  }));
-                                }}
-                                className={`w-16 bg-transparent text-right text-xs font-bold text-indigo-700 outline-none ${isConfigLocked ? 'cursor-not-allowed' : ''}`}
-                              />
-                              <span className="text-xs font-bold text-indigo-700">%</span>
-                            </div>
-                          </div>
-                          <p className="text-[8px] text-indigo-400 mt-1 italic">
-                            * Este porcentaje se mantendrá fijo para todos tus cálculos hasta que lo cambies.
-                          </p>
-                          <div className="flex items-center justify-between text-indigo-800">
-                            <span className="text-[10px] font-medium">Equivale a:</span>
-                            <span className="text-xs font-bold">{formatCurrency(results.all.retefuente)}</span>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-bold text-indigo-600 uppercase">Calculada por Ley</span>
-                          <span className="text-xs font-bold text-indigo-700">{formatCurrency(results.all.retefuente)}</span>
-                        </div>
-                      )}
-                      
-                      <p className="text-[9px] text-indigo-400 italic leading-tight">
-                        {rates.payroll.useManualRetefuente 
-                          ? "Aplicando porcentaje manual fijo sobre el total bruto."
-                          : "Calculada automáticamente sobre la base gravable neta (Art. 383)."}
-                      </p>
-                    </div>
+
                     <div className="h-px bg-slate-200 my-2" />
+                    <div className="space-y-2">
+                       <label className="block text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1">
+                          Modalidad de Retención en la Fuente
+                          <button 
+                            onClick={() => setShowHelp(HELP_CONTENT.retefuente)}
+                            className="hover:text-indigo-600 transition-colors"
+                          >
+                            <Info className="w-3 h-3 text-slate-400" />
+                          </button>
+                       </label>
+                       
+                       <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl">
+                          <button
+                            onClick={() => {
+                              if (rates.payroll.useManualRetefuente) {
+                                setConfirmDialog({
+                                  title: 'Cambiar a Retención de Ley',
+                                  message: '¿Desea volver al cálculo automático basado en la normativa legal (Art. 383 E.T.)?',
+                                  confirmLabel: 'Sí, Automático',
+                                  onConfirm: () => {
+                                    setRates(prev => ({
+                                      ...prev,
+                                      payroll: { ...prev.payroll, useManualRetefuente: false }
+                                    }));
+                                    setConfirmDialog(null);
+                                    showToast("Cálculo automático de retención activado.");
+                                  }
+                                });
+                              }
+                            }}
+                            className={`py-2 text-[10px] font-bold rounded-lg transition-all ${!rates.payroll.useManualRetefuente ? 'bg-white text-indigo-600 shadow-sm shadow-indigo-100' : 'text-slate-400 hover:bg-slate-200'}`}
+                          >
+                             AUTOMÁTICO (LEY)
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (!rates.payroll.useManualRetefuente) {
+                                setConfirmDialog({
+                                  title: 'Cambiar a Retención Manual',
+                                  message: '¿Desea fijar un porcentaje de retención personalizado de forma manual?',
+                                  confirmLabel: 'Sí, Manual',
+                                  onConfirm: () => {
+                                    setRates(prev => ({
+                                      ...prev,
+                                      payroll: { ...prev.payroll, useManualRetefuente: true }
+                                    }));
+                                    setConfirmDialog(null);
+                                    showToast("Configura el porcentaje deseado.", 'info');
+                                  }
+                                });
+                              }
+                            }}
+                            className={`py-2 text-[10px] font-bold rounded-lg transition-all ${rates.payroll.useManualRetefuente ? 'bg-rose-500 text-white shadow-sm shadow-rose-200' : 'text-slate-400 hover:bg-slate-200'}`}
+                          >
+                             MANUAL (FIJO %)
+                          </button>
+                       </div>
+
+                       <AnimatePresence mode="wait">
+                          {rates.payroll.useManualRetefuente ? (
+                            <motion.div 
+                              initial={{ opacity: 0, y: -10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: -10 }}
+                              className="relative"
+                            >
+                               <span className="block text-[8px] font-bold text-rose-500 uppercase mb-1">Ingresa el % de Retención Fijo</span>
+                               <input 
+                                 type="number"
+                                 step="0.01"
+                                 value={rates.payroll.manualRetefuentePct}
+                                 disabled={isConfigLocked}
+                                 onBlur={(e) => {
+                                   const val = Math.max(0, Number(e.target.value));
+                                   if (val !== rates.payroll.manualRetefuentePct) {
+                                     setConfirmDialog({
+                                       title: 'Confirmar Nuevo Porcentaje',
+                                       message: `¿Está seguro de que desea registrar ${val}% como nuevo valor fijo de retención?`,
+                                       confirmLabel: 'Confirmar %',
+                                       onConfirm: () => {
+                                         setRates(prev => ({
+                                           ...prev,
+                                           payroll: { ...prev.payroll, manualRetefuentePct: val }
+                                         }));
+                                         setConfirmDialog(null);
+                                         showToast(`Retención fijada en ${val}%`, 'success');
+                                       }
+                                     });
+                                   }
+                                 }}
+                                 className={`w-full bg-white border border-rose-200 rounded-xl py-3 pl-4 pr-10 text-lg focus:ring-2 focus:ring-rose-500 outline-none transition-all font-mono font-black text-rose-700 ${isConfigLocked ? 'opacity-50 grayscale bg-slate-50 cursor-not-allowed' : ''}`}
+                               />
+                               <span className="absolute right-4 bottom-3 text-rose-400 font-black text-xl">%</span>
+                            </motion.div>
+                          ) : (
+                            <motion.div 
+                              initial={{ opacity: 0, y: -10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: -10 }}
+                              className="bg-emerald-50 border border-emerald-100 rounded-xl p-3"
+                            >
+                               <div className="flex items-center gap-2 mb-1">
+                                  <ShieldCheck className="w-3 h-3 text-emerald-500" />
+                                  <span className="text-[9px] font-black text-emerald-600 uppercase">Cálculo según Art. 383 E.T.</span>
+                               </div>
+                               <p className="text-[8px] text-emerald-500 leading-tight">
+                                  Se aplica la tabla progresiva de la DIAN descontando deducciones de ley, renta exenta y topes permitidos.
+                               </p>
+                            </motion.div>
+                          )}
+                       </AnimatePresence>
+                    </div>
+
                     <div>
                       <label className="block text-[10px] font-bold text-indigo-500 uppercase mb-1 flex items-center gap-1">
                         Promedio Vacaciones (12 Meses)
@@ -5416,7 +5594,7 @@ function MainApp() {
                                 <Edit3 className="w-3 h-3" />
                               </button>
                             </div>
-                            <span className="font-bold text-rose-800">{formatCurrency(results.all.retefuente)}</span>
+                            <span className="font-bold text-rose-800">{formatCurrency(results.all.taxBreakdown.retefuente)}</span>
                           </div>
                           {results.all.taxBreakdown.additionalDeductions > 0 && (
                             <div className="flex justify-between text-[10px] pt-1 border-t border-rose-100/50">
@@ -5602,7 +5780,14 @@ function MainApp() {
                         className="flex-1 bg-white/10 hover:bg-white/20 text-white font-bold py-3 px-4 rounded-xl transition-all flex items-center justify-center gap-2 text-xs"
                       >
                         <Printer className="w-4 h-4" />
-                        Imprimir / PDF
+                        PDF / Imprimir
+                      </button>
+                      <button 
+                        onClick={() => exportToExcel()}
+                        className="flex-1 bg-white/10 hover:bg-white/20 text-white font-bold py-3 px-4 rounded-xl transition-all flex items-center justify-center gap-2 text-xs"
+                      >
+                        <FileDown className="w-4 h-4" />
+                        Excel
                       </button>
                       <button 
                         onClick={saveCurrentCalculation}
@@ -5630,7 +5815,111 @@ function MainApp() {
 
                 {/* Extract Body (Mirrors Section 3.5) */}
                 <div className="p-8 lg:p-12 space-y-10">
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                  {/* Grid de Discriminación Detallada (Requested by User) */}
+                  <div className="space-y-4">
+                     <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] flex items-center gap-2">
+                        <div className="w-6 h-0.5 bg-indigo-500" />
+                        Matriz de Discriminación Detallada (Auditoría)
+                     </h4>
+                     <div className="flex flex-col gap-4">
+                        {/* Horas */}
+                        <div className="bg-slate-50 border border-slate-200 rounded-3xl p-6">
+                           <div className="flex items-center gap-2 mb-4 text-slate-400">
+                              <Clock className="w-4 h-4" />
+                              <span className="text-[10px] font-black uppercase">Distribución de Horas</span>
+                           </div>
+                           <div className="space-y-6">
+                              <div className="space-y-3">
+                                 <span className="text-[9px] font-bold text-slate-400 uppercase flex items-center gap-2">
+                                    <div className="w-4 h-px bg-slate-300" />
+                                    Consulta / Libres
+                                 </span>
+                                 <div className="flex flex-wrap gap-2">
+                                    <div className="flex-1 min-w-[80px] bg-white p-3 rounded-xl border border-slate-100 flex flex-col items-center justify-center">
+                                       <span className="block text-[8px] text-slate-400 font-bold uppercase">DIU</span>
+                                       <span className="text-sm font-mono font-bold text-slate-700">{results.all.hoursBreakdown.day.toFixed(1)}h</span>
+                                    </div>
+                                    <div className="flex-1 min-w-[80px] bg-white p-3 rounded-xl border border-slate-100 flex flex-col items-center justify-center">
+                                       <span className="block text-[8px] text-slate-400 font-bold uppercase">NOC</span>
+                                       <span className="text-sm font-mono font-bold text-slate-700">{results.all.hoursBreakdown.night.toFixed(1)}h</span>
+                                    </div>
+                                    <div className="flex-1 min-w-[80px] bg-white p-3 rounded-xl border border-slate-100 flex flex-col items-center justify-center">
+                                       <span className="block text-[8px] text-slate-400 font-bold uppercase">F-DIU</span>
+                                       <span className="text-sm font-mono font-bold text-slate-700">{results.all.hoursBreakdown.holidayDay.toFixed(1)}h</span>
+                                    </div>
+                                    <div className="flex-1 min-w-[80px] bg-white p-3 rounded-xl border border-slate-100 flex flex-col items-center justify-center">
+                                       <span className="block text-[8px] text-slate-400 font-bold uppercase">F-NOC</span>
+                                       <span className="text-sm font-mono font-bold text-slate-700">{results.all.hoursBreakdown.holidayNight.toFixed(1)}h</span>
+                                    </div>
+                                 </div>
+                              </div>
+                              <div className="space-y-3">
+                                 <span className="text-[9px] font-bold text-indigo-400 uppercase flex items-center gap-2">
+                                    <div className="w-4 h-px bg-indigo-200" />
+                                    AVA / Virtuales
+                                 </span>
+                                 <div className="flex flex-wrap gap-2">
+                                    <div className="flex-1 min-w-[80px] bg-indigo-50/50 p-3 rounded-xl border border-indigo-100 flex flex-col items-center justify-center">
+                                       <span className="block text-[8px] text-indigo-400 font-bold uppercase">DIU</span>
+                                       <span className="text-sm font-mono font-bold text-indigo-700">{results.all.avaBreakdown.day.toFixed(1)}h</span>
+                                    </div>
+                                    <div className="flex-1 min-w-[80px] bg-indigo-50/50 p-3 rounded-xl border border-indigo-100 flex flex-col items-center justify-center">
+                                       <span className="block text-[8px] text-indigo-400 font-bold uppercase">NOC</span>
+                                       <span className="text-sm font-mono font-bold text-indigo-700">{results.all.avaBreakdown.night.toFixed(1)}h</span>
+                                    </div>
+                                    <div className="flex-1 min-w-[80px] bg-indigo-50/50 p-3 rounded-xl border border-indigo-100 flex flex-col items-center justify-center">
+                                       <span className="block text-[8px] text-indigo-400 font-bold uppercase">F-DIU</span>
+                                       <span className="text-sm font-mono font-bold text-indigo-700">{results.all.avaBreakdown.holidayDay.toFixed(1)}h</span>
+                                    </div>
+                                    <div className="flex-1 min-w-[80px] bg-indigo-50/50 p-3 rounded-xl border border-indigo-100 flex flex-col items-center justify-center">
+                                       <span className="block text-[8px] text-indigo-400 font-bold uppercase">F-NOC</span>
+                                       <span className="text-sm font-mono font-bold text-indigo-700">{results.all.avaBreakdown.holidayNight.toFixed(1)}h</span>
+                                    </div>
+                                 </div>
+                              </div>
+                           </div>
+                        </div>
+
+                        {/* Pacientes */}
+                        <div className="bg-emerald-50/30 border border-emerald-100 rounded-3xl p-6">
+                           <div className="flex items-center gap-2 mb-4 text-emerald-400">
+                              <Users className="w-4 h-4" />
+                              <span className="text-[10px] font-black uppercase">Recuento de Pacientes</span>
+                           </div>
+                           <div className="flex flex-col gap-3">
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                 <div className="bg-white p-4 rounded-2xl border border-emerald-50 text-center shadow-sm">
+                                    <span className="block text-[8px] text-emerald-400 font-black uppercase tracking-widest mb-1">Diurnos</span>
+                                    <span className="text-2xl font-mono font-bold text-emerald-700">{results.all.patientsBreakdown.day}</span>
+                                 </div>
+                                 <div className="bg-white p-4 rounded-2xl border border-emerald-50 text-center shadow-sm">
+                                    <span className="block text-[8px] text-emerald-400 font-black uppercase tracking-widest mb-1">Nocturnos</span>
+                                    <span className="text-2xl font-mono font-bold text-emerald-700">{results.all.patientsBreakdown.night}</span>
+                                 </div>
+                                 <div className="bg-white p-4 rounded-2xl border border-emerald-50 text-center shadow-sm">
+                                    <span className="block text-[8px] text-emerald-400 font-black uppercase tracking-widest mb-1">Fest. Diu</span>
+                                    <span className="text-2xl font-mono font-bold text-emerald-700">{results.all.patientsBreakdown.holidayDay}</span>
+                                 </div>
+                                 <div className="bg-white p-4 rounded-2xl border border-emerald-50 text-center shadow-sm">
+                                    <span className="block text-[8px] text-emerald-400 font-black uppercase tracking-widest mb-1">Fest. Noc</span>
+                                    <span className="text-2xl font-mono font-bold text-emerald-700">{results.all.patientsBreakdown.holidayNight}</span>
+                                 </div>
+                              </div>
+                              <div className="bg-emerald-600 p-4 rounded-2xl text-white flex justify-between items-center px-8 shadow-lg shadow-emerald-200/50">
+                                 <div>
+                                    <span className="block text-[9px] font-black uppercase opacity-70 tracking-widest">Total Productividad</span>
+                                    <span className="text-3xl font-black text-white">{results.all.totalMonthlyPatients} Pacientes</span>
+                                 </div>
+                                 <div className="bg-white/20 p-2 rounded-xl backdrop-blur-sm">
+                                    <Users className="w-8 h-8 text-white" />
+                                 </div>
+                              </div>
+                           </div>
+                        </div>
+                     </div>
+                  </div>
+
+                  <div className="flex flex-col gap-10">
                     
                     {/* Column 1: Income Breakdown */}
                     <div className="space-y-6">
@@ -5676,9 +5965,16 @@ function MainApp() {
                                 </div>
                              </div>
 
-                             <div className="flex justify-between text-[11px] font-black text-emerald-600 pt-2 border-t border-slate-100">
-                                <span>TOTAL PACIENTES</span>
-                                <span className="font-mono">{formatCurrency(results.all.grossBreakdown.service)}</span>
+                             <div className="space-y-1 pt-2 border-t border-slate-100">
+                                <div className="flex justify-between text-[11px] font-black text-emerald-600 uppercase">
+                                   <span>Pacientes por Productividad</span>
+                                   <span className="font-mono">{formatCurrency(results.all.grossBreakdown.service)}</span>
+                                </div>
+                                <div className="grid grid-cols-3 gap-1 text-[9px] text-emerald-500 font-mono">
+                                   <span>DIU: {results.all.patientsBreakdown.day}p</span>
+                                   <span className="text-center">NOC: {results.all.patientsBreakdown.night}p</span>
+                                   <span className="text-right">FES: {(results.all.patientsBreakdown.holidayDay + results.all.patientsBreakdown.holidayNight)}p</span>
+                                </div>
                              </div>
                           </div>
                         </div>
@@ -5712,19 +6008,13 @@ function MainApp() {
                               <span className="font-mono">-{formatCurrency(results.all.taxBreakdown.pension)}</span>
                            </div>
                            <div className="flex justify-between text-[11px] font-black text-rose-900 pt-1 border-t border-rose-200/50">
-                              <span className="uppercase tracking-tight">Retención en la Fuente</span>
-                              <span className="font-mono">-{formatCurrency(results.all.retefuente)}</span>
+                              <span className="uppercase tracking-tight">Otras Deducciones</span>
+                              <span className="font-mono">-{formatCurrency(results.all.additionalDeductions)}</span>
                            </div>
                            {results.all.taxBreakdown.fsp > 0 && (
                              <div className="flex justify-between text-[11px] font-bold text-rose-700 italic">
                                 <span>Fondo Solidaridad Pensional</span>
                                 <span className="font-mono">-{formatCurrency(results.all.taxBreakdown.fsp)}</span>
-                             </div>
-                           )}
-                           {results.all.taxBreakdown.additionalDeductions > 0 && (
-                             <div className="flex justify-between text-[11px] font-bold text-rose-700">
-                                <span>Otras Deducciones</span>
-                                <span className="font-mono">-{formatCurrency(results.all.taxBreakdown.additionalDeductions)}</span>
                              </div>
                            )}
                         </div>
@@ -5781,7 +6071,7 @@ function MainApp() {
                   {/* Legal Footer */}
                   <div className="pt-10 border-t border-slate-100 flex flex-col md:flex-row items-center justify-between gap-6">
                     <p className="text-[9px] text-slate-400 font-medium max-w-lg leading-relaxed">
-                      Este documento certifica la liquidación técnica de honorarios. Los valores coinciden exactamente con la bitácora de turnos del sistema y la sección de resultados consolidados (3.5). Nota: La Retención en la Fuente y deducciones de ley han sido validadas según la configuración vigente.
+                      Este documento certifica la liquidación técnica de honorarios. Los valores coinciden exactamente con la bitácora de turnos del sistema y la sección de resultados consolidados (3.5). Nota: Las deducciones de ley han sido validadas según la configuración vigente.
                     </p>
                     <div className="flex items-center gap-4 grayscale opacity-40 hover:grayscale-0 hover:opacity-100 transition-all">
                        <Calculator className="w-6 h-6 text-slate-900" />

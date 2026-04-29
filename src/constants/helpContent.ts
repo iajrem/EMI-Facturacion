@@ -34,5 +34,9 @@ export const HELP_CONTENT: { [key: string]: { title: string, content: string } }
   ibcMinimo: {
     title: "Aportar sobre el Mínimo",
     content: "Si activas esta opción, tus deducciones de Salud y Pensión se calcularán sobre el Salario Mínimo (SMMLV), independientemente de si ganas más. Esto aumenta tu neto mensual pero reduce tus aportes a seguridad social."
+  },
+  retefuente: {
+    title: "Retención en la Fuente (Art. 383)",
+    content: "Impuesto anticipado sobre la renta. Por defecto se calcula mediante la tabla progresiva de la DIAN (Art. 383 E.T.), aplicando la depuración de deducciones (dependientes, salud, vivienda) y la renta exenta del 25%. Puedes fijar un porcentaje manual si así lo prefieres para tu planeación financiera."
   }
 };
