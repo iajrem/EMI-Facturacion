@@ -13,7 +13,7 @@ export const HELP_CONTENT: { [key: string]: { title: string, content: string } }
   },
   nightShift: {
     title: "Inicio Hora Nocturna",
-    content: "En Colombia, el recargo nocturno legalmente inicia a las 9:00 PM (21:00). Sin embargo, algunos contratos o acuerdos pueden definir un inicio diferente. Este parámetro ajusta el cálculo de tus horas nocturnas."
+    content: "En Colombia, el recargo nocturno inicia a las 7:00 PM (19:00). Este parámetro ajusta el cálculo de tus horas nocturnas en la bitácora y extractos."
   },
   prepagada: {
     title: "Medicina Prepagada",

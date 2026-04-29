@@ -13,6 +13,7 @@ import {
   Settings, 
   ChevronDown, 
   ChevronUp,
+  ChevronRight,
   Info,
   AlertCircle,
   TrendingUp,
@@ -44,7 +45,10 @@ import {
   RotateCcw,
   FileDown,
   AlertTriangle,
-  Monitor
+  Monitor,
+  Lock,
+  ShieldCheck,
+  Check,
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
@@ -258,6 +262,7 @@ interface ShiftInput {
   isAVAShift: boolean;
   isVirtualShift: boolean;
   isExtraShift: boolean;
+  isAdditionalShift: boolean;
   extraHoursType: 'consultation' | 'avaVirtual';
 }
 
@@ -304,6 +309,7 @@ interface ShiftRecord {
   applyPatients: boolean;
   isDefinitive: boolean;
   isExtraShift: boolean;
+  isAdditionalShift: boolean;
   isHolidayStart: boolean;
   isHolidayEnd: boolean;
   isAVAShift: boolean;
@@ -780,9 +786,9 @@ const calculatePeriodTotals = (
 
   totalH = components.base + components.extraSurcharge;
   totalAVA = components.avaVirtual;
-  totalP = components.service; // Fix: service already contains both fixed service per hour and patient values.
+  totalP = components.service; 
 
-  const gross = totalH + totalP + totalAVA;
+  const gross = components.base + components.extraSurcharge + components.service + components.avaVirtual;
   const totalRegularHours = hoursBreakdown.day + hoursBreakdown.night + hoursBreakdown.holidayDay + hoursBreakdown.holidayNight +
                            avaVirtualBreakdown.day + avaVirtualBreakdown.night + avaVirtualBreakdown.holidayDay + avaVirtualBreakdown.holidayNight;
   const totalExtraHours = hoursBreakdown.extraDay + hoursBreakdown.extraNight + hoursBreakdown.extraHolidayDay + hoursBreakdown.extraHolidayNight +
@@ -817,7 +823,15 @@ const calculatePeriodTotals = (
   const legalDeductions = health + pension + fsp; // ARL is paid by employer in Colombia for employees
 
   // --- Proportional Calculations based on Period History ---
-  const otherPeriods = periods.filter(p => p.id !== selectedPeriodId && p.endDate < (activePeriod?.startDate || ''));
+  const currentPeriod = periods.find(p => p.id === selectedPeriodId);
+  const otherPeriods = periods.filter(p => {
+    if (p.id === selectedPeriodId) return false;
+    if (currentPeriod) {
+      return p.endDate < currentPeriod.startDate;
+    }
+    // Fallback if no period selected (shouldn't happen in calculatePeriodTotals for a period)
+    return p.endDate < (periods.find(per => per.status === 'active')?.startDate || '');
+  });
   const sortedOthers = [...otherPeriods].sort((a, b) => b.endDate.localeCompare(a.endDate));
   
   // Average 6 Months (Semester Reset for Primas) - Excluding current month as requested
@@ -829,15 +843,18 @@ const calculatePeriodTotals = (
   const last6OthersPrima = primaOthers.slice(0, 6);
   const count6Prima = last6OthersPrima.length;
   const total6Prima = last6OthersPrima.reduce((sum, p) => sum + (p.totalGross || 0), 0);
-  const avg6Prima = count6Prima > 0 ? total6Prima / count6Prima : 0;
+  const avg6PrimaFromHistory = count6Prima > 0 ? total6Prima / count6Prima : 0;
+  // Use config as fallback if history is empty
+  const avg6Prima = avg6PrimaFromHistory > 0 ? avg6PrimaFromHistory : (rates.payroll.avgBilling6Months || 0);
   
   // Average for proportional calculation (includes current)
   const count6Proportional = last6OthersPrima.slice(0, 5).length + (selectedPeriodId ? 1 : 0);
   const total6Proportional = last6OthersPrima.slice(0, 5).reduce((sum, p) => sum + (p.totalGross || 0), 0) + (selectedPeriodId ? gross : 0);
-  const avg6Proportional = count6Proportional > 0 ? total6Proportional / count6Proportional : 0;
+  const avg6ProportionalFromHistory = count6Proportional > 0 ? total6Proportional / count6Proportional : 0;
+  const avg6Proportional = avg6ProportionalFromHistory > 0 ? avg6ProportionalFromHistory : (rates.payroll.avgBilling6Months || 0);
   
   const primaProporcional = avg6Proportional / 12;
-  const primaSemestral = avg6Prima * 0.5; // Final total for 6 months (50% of average of last 6 months)
+  const primaSemestral = avg6Prima * 0.5; // Final total for 6 months
   const cesantiasProporcional = avg6Proportional / 12;
   const interesesCesantias = cesantiasProporcional * 0.12;
 
@@ -850,7 +867,8 @@ const calculatePeriodTotals = (
   const last11Others = vacationOthers.slice(0, 11);
   const count12 = last11Others.length + (selectedPeriodId ? 1 : 0);
   const total12 = last11Others.reduce((sum, p) => sum + (p.totalGross || 0), 0) + (selectedPeriodId ? gross : 0);
-  const avg12 = count12 > 0 ? total12 / count12 : 0;
+  const avg12FromHistory = count12 > 0 ? total12 / count12 : 0;
+  const avg12 = avg12FromHistory > 0 ? avg12FromHistory : (rates.payroll.avgBilling12Months || 0);
   const vacacionesProporcional = avg12 / 24;
 
   // --- Retefuente ---
@@ -964,7 +982,8 @@ const calculatePeriodTotals = (
       consultationBase: totalH,
       service: totalP,
       ava: totalAVA
-    }
+    },
+    additionalShiftsCount: records.filter(r => r.isAdditionalShift).length
   };
 };
 
@@ -993,6 +1012,7 @@ function MainApp() {
     isAVAShift: false,
     isVirtualShift: false,
     isExtraShift: false,
+    isAdditionalShift: false,
     extraHoursType: 'consultation'
   });
   const [manualTrisemanaId, setManualTrisemanaId] = useState<string | null>(null);
@@ -1019,6 +1039,13 @@ function MainApp() {
   const [showHelp, setShowHelp] = useState<{ title: string, content: string } | null>(null);
   const [showTrisemanaHistory, setShowTrisemanaHistory] = useState(false);
   const [showReteDetail, setShowReteDetail] = useState(false);
+  const [showHistoricalModal, setShowHistoricalModal] = useState(false);
+  const [historicalData, setHistoricalData] = useState({
+    name: '',
+    gross: 0,
+    month: new Date().getMonth() + 1,
+    year: new Date().getFullYear()
+  });
 
   const [editingPeriod, setEditingPeriod] = useState<BillingPeriod | null>(null);
   const [editingTrisemana, setEditingTrisemana] = useState<Trisemana | null>(null);
@@ -1233,7 +1260,7 @@ function MainApp() {
         id: period.id,
         name: period.name,
         timestamp: period.createdAt,
-        records: allRecords.filter(r => r.periodId === period.id || (!r.periodId && r.date >= period.startDate && r.date <= period.endDate)),
+        records: sortRecords(allRecords.filter(r => r.periodId === period.id || (!r.periodId && r.date >= period.startDate && r.date <= period.endDate))),
         rates: period.rates || rates,
         additionalDeductions: allDeductions.filter(d => d.periodId === period.id)
       });
@@ -1257,6 +1284,18 @@ function MainApp() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (records.some(r => !r.isDefinitive)) {
+        e.preventDefault();
+        e.returnValue = '';
+        return '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [records]);
+
   const [showDetails, setShowDetails] = useState(false);
   const [savedCalculations, setSavedCalculations] = useState<SavedCalculation[]>(() => {
     try {
@@ -1271,49 +1310,252 @@ function MainApp() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>([]);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' | 'info' } | null>(null);
+  
+  // Logic for config locking and confirmation
+  const handleEnableConfigEdit = () => {
+    setTempRates(JSON.parse(JSON.stringify(rates)));
+    setIsConfigLocked(false);
+    showToast("Edición de configuración habilitada.", 'info');
+  };
+
+  const handleReviewConfigChanges = () => {
+    if (!tempRates) {
+      setIsConfigLocked(true);
+      return;
+    }
+
+    const getRatesDiff = (r1: Rates, r2: Rates) => {
+      const diffs: { label: string, old: any, new: any }[] = [];
+      
+      // Base
+      if (r1.base.consultation !== r2.base.consultation) diffs.push({ label: 'Tarifa Consulta', old: r1.base.consultation, new: r2.base.consultation });
+      if (r1.base.service !== r2.base.service) diffs.push({ label: 'Tarifa Servicio (Hora)', old: r1.base.service, new: r2.base.service });
+      if (r1.base.ava !== r2.base.ava) diffs.push({ label: 'Tarifa AVA', old: r1.base.ava, new: r2.base.ava });
+      
+      // Patients
+      if (r1.patient.day !== r2.patient.day) diffs.push({ label: 'Paciente Día', old: r1.patient.day, new: r2.patient.day });
+      if (r1.patient.night !== r2.patient.night) diffs.push({ label: 'Paciente Noc', old: r1.patient.night, new: r2.patient.night });
+      if (r1.patient.holidayDay !== r2.patient.holidayDay) diffs.push({ label: 'Paciente Fes Diu', old: r1.patient.holidayDay, new: r2.patient.holidayDay });
+      if (r1.patient.holidayNight !== r2.patient.holidayNight) diffs.push({ label: 'Paciente Fes Noc', old: r1.patient.holidayNight, new: r2.patient.holidayNight });
+  
+      // Payroll
+      if (r1.payroll.jobTitle !== r2.payroll.jobTitle) diffs.push({ label: 'Cargo', old: r1.payroll.jobTitle, new: r2.payroll.jobTitle });
+      if (r1.payroll.uvtValue !== r2.payroll.uvtValue) diffs.push({ label: 'Valor UVT', old: r1.payroll.uvtValue, new: r2.payroll.uvtValue });
+      if (r1.payroll.billingCutoffDay !== r2.payroll.billingCutoffDay) diffs.push({ label: 'Día de Corte', old: r1.payroll.billingCutoffDay, new: r2.payroll.billingCutoffDay });
+      if (r1.payroll.nightShiftStart !== r2.payroll.nightShiftStart) diffs.push({ label: 'Inicio Nocturna', old: r1.payroll.nightShiftStart, new: r2.payroll.nightShiftStart });
+      if (r1.payroll.dependents !== r2.payroll.dependents) diffs.push({ label: 'Dependientes', old: r1.payroll.dependents ? 'Sí' : 'No', new: r2.payroll.dependents ? 'Sí' : 'No' });
+      if (r1.payroll.prepagada !== r2.payroll.prepagada) diffs.push({ label: 'Prepagada', old: r1.payroll.prepagada, new: r2.payroll.prepagada });
+      if (r1.payroll.interesesVivienda !== r2.payroll.interesesVivienda) diffs.push({ label: 'Int. Vivienda', old: r1.payroll.interesesVivienda, new: r2.payroll.interesesVivienda });
+      if (r1.payroll.pensionVoluntaria !== r2.payroll.pensionVoluntaria) diffs.push({ label: 'Pens. Voluntaria', old: r1.payroll.pensionVoluntaria, new: r2.payroll.pensionVoluntaria });
+      if (r1.payroll.useManualRetefuente !== r2.payroll.useManualRetefuente) diffs.push({ label: 'Retefuente Manual', old: r1.payroll.useManualRetefuente ? 'Activado' : 'Desactivado', new: r2.payroll.useManualRetefuente ? 'Activado' : 'Desactivado' });
+      if (r1.payroll.manualRetefuentePct !== r2.payroll.manualRetefuentePct) diffs.push({ label: 'Pct Retefuente Manual', old: r1.payroll.manualRetefuentePct + '%', new: r2.payroll.manualRetefuentePct + '%' });
+  
+      return diffs;
+    };
+
+    const diffs = getRatesDiff(tempRates, rates);
+    
+    if (diffs.length === 0) {
+      setIsConfigLocked(true);
+      setTempRates(null);
+      showToast("No se detectaron cambios en la configuración.");
+      return;
+    }
+
+    setConfigDiffs(diffs);
+    setShowConfigConfirmModal(true);
+  };
+
+  const confirmConfigChanges = async () => {
+    setIsConfigLocked(true);
+    setTempRates(null);
+    setShowConfigConfirmModal(false);
+    
+    // Explicitly sync to Firestore if user is authenticated
+    if (user) {
+      try {
+        await updateDoc(doc(db, `users/${user.uid}`), { rates });
+        showToast("Configuración guardada y sincronizada.", 'success');
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}`);
+      }
+    } else {
+      showToast("Cambios aplicados localmente.", 'success');
+    }
+  };
+
+  const discardConfigChanges = () => {
+    if (tempRates) {
+      setRates(tempRates);
+    }
+    setIsConfigLocked(true);
+    setTempRates(null);
+    setShowConfigConfirmModal(false);
+    showToast("Cambios descartados.");
+  };
+
   const [showPeriodSelectionModal, setShowPeriodSelectionModal] = useState(false);
   const [showAccumulatedDetails, setShowAccumulatedDetails] = useState(false);
   const [showAccumulatedComponents, setShowAccumulatedComponents] = useState(false);
   const [showProjectionDetails, setShowProjectionDetails] = useState(false);
+  const [extractVerified, setExtractVerified] = useState<{ isValid: boolean; errorRecords: string[] }>({ isValid: true, errorRecords: [] });
+  const [isConfigLocked, setIsConfigLocked] = useState(true);
+  const [tempRates, setTempRates] = useState<Rates | null>(null);
+  const [showConfigConfirmModal, setShowConfigConfirmModal] = useState(false);
+  const [configDiffs, setConfigDiffs] = useState<{ label: string, old: any, new: any }[]>([]);
+
+  // --- Calculations ---
+  const results = useMemo(() => {
+    const baseRecords = viewingArchive ? viewingArchive.records : records;
+    const currentPeriod = periods.find(p => p.id === selectedPeriodId);
+    
+    // Normalize calculation rates to ensure all fields exist
+    // IMPORTANT: For active periods, always use global rates to allow live editing
+    const rawRates = viewingArchive 
+      ? viewingArchive.rates 
+      : (currentPeriod && currentPeriod.status === 'archived' ? (currentPeriod.rates || rates) : rates);
+    const calculationRates = normalizeRates(rawRates);
+
+    let recordsToCalculate = [...baseRecords];
+    let allRecordsToCalculate = viewingArchive && currentPeriod 
+      ? allRecords.filter(r => r.date <= currentPeriod.endDate)
+      : [...allRecords];
+
+    // Real-time projection: if we are not editing (meaning we are adding), 
+    // and the current form has a date, inject it as a projection if it's not already in recordsToCalculate
+    // DISABLE projections for archived views or archived periods
+    const isShiftDirty = !viewingArchive && currentPeriod?.status !== 'archived' && (Object.values(quantities.hours).some(v => v > 0) || 
+                        Object.values(quantities.ava).some(v => v > 0) || 
+                        Object.values(quantities.patients).some(v => v > 0));
+
+    if (!viewingArchive && currentPeriod?.status !== 'archived' && editingId) {
+      const currentFormRecord: ShiftRecord = {
+        id: editingId,
+        userId: user?.uid || '',
+        periodId: selectedPeriodId || undefined,
+        date: shift.date,
+        startTime: shift.startTime,
+        endTime: shift.endTime,
+        hours: { ...quantities.hours },
+        ava: { ...quantities.ava },
+        patients: { ...quantities.patients },
+        applyPatients: quantities.applyPatients,
+        isDefinitive: (viewingArchive 
+          ? viewingArchive.records.find(r => r.id === editingId)?.isDefinitive 
+          : records.find(r => r.id === editingId)?.isDefinitive) || false,
+        isExtraShift: shift.isExtraShift,
+        isHolidayStart: shift.isHolidayStart,
+        isHolidayEnd: shift.isHolidayEnd,
+        isAVAShift: shift.isAVAShift,
+        isVirtualShift: shift.isVirtualShift,
+        isAdditionalShift: shift.isAdditionalShift,
+        extraHoursType: shift.extraHoursType
+      };
+      recordsToCalculate = recordsToCalculate.map(r => r.id === editingId ? currentFormRecord : r);
+      allRecordsToCalculate = allRecordsToCalculate.map(r => r.id === editingId ? currentFormRecord : r);
+    } else if (shift.date && isShiftDirty) {
+      // Logic for real-time adding projection
+      const draftRecord: ShiftRecord = {
+        id: 'draft-temp-id',
+        userId: user?.uid || '',
+        periodId: selectedPeriodId || undefined,
+        date: shift.date,
+        startTime: shift.startTime,
+        endTime: shift.endTime,
+        hours: { ...quantities.hours },
+        ava: { ...quantities.ava },
+        patients: { ...quantities.patients },
+        applyPatients: quantities.applyPatients,
+        isDefinitive: false, // Draft is always a projection
+        isExtraShift: shift.isExtraShift,
+        isHolidayStart: shift.isHolidayStart,
+        isHolidayEnd: shift.isHolidayEnd,
+        isAVAShift: shift.isAVAShift,
+        isVirtualShift: shift.isVirtualShift,
+        isAdditionalShift: shift.isAdditionalShift,
+        extraHoursType: shift.extraHoursType
+      };
+      recordsToCalculate = [...recordsToCalculate, draftRecord];
+      allRecordsToCalculate = [...allRecordsToCalculate, draftRecord];
+    }
+
+    const allResults = calculatePeriodTotals(
+      recordsToCalculate,
+      calculationRates,
+      additionalDeductions,
+      periods,
+      selectedPeriodId,
+      allRecordsToCalculate,
+      trisemanas
+    );
+
+    // Instead of re-calculating from scratch, we extract the definitive totals 
+    // from the same distribution to ensure cumulative thresholds (trisemanas) match.
+    // This fixes the discrepancy where definitive-only calculation would 'reset' the trisemana counter.
+    
+    // We can't just filter the final results easily because they are aggregated.
+    // However, we want the "Final Extract" to reflect what is actually recorded as definitive.
+    // So we'll calculate definitiveResults as before BUT using the FULL set of all records 
+    // to preserve temporal trisemana logic, then only summing the records that ARE definitive.
+
+    // Let's create a specialized version of calculatePeriodTotals or just filter inside it.
+    // Actually, the simplest way is to pass a filter to calculatePeriodTotals.
+    
+    const definitiveResults = calculatePeriodTotals(
+      recordsToCalculate.filter(r => r.isDefinitive),
+      calculationRates,
+      additionalDeductions,
+      periods,
+      selectedPeriodId,
+      allRecordsToCalculate, // We keep ALL records here so thresholds calculate correctly
+      trisemanas
+    );
+
+    return {
+      all: allResults,
+      definitive: definitiveResults,
+      calculationRates
+    };
+  }, [records, viewingArchive, periods, selectedPeriodId, rates, additionalDeductions, editingId, shift, quantities, user, allRecords, trisemanas]);
+
+  const allRecordsAreDefinitive = useMemo(() => {
+    return records.length > 0 && records.every(r => r.isDefinitive);
+  }, [records]);
+
+  // Verification Engine: Checks if the aggregated results match the sum of individual record calculations
+  useEffect(() => {
+    if (!records.length) return;
+
+    let totalGrossVerified = 0;
+    const errors: string[] = [];
+
+    records.forEach(r => {
+      const dist = results.all.recordDistributions[r.id];
+      if (dist) {
+        const val = calculateShiftValue({
+          ...r,
+          isAVAShift: r.isAVAShift || r.isVirtualShift || (Object.values(r.ava || {}).some(v => v > 0) && Object.values(r.hours || {}).every(v => v === 0))
+        }, results.calculationRates, dist);
+        
+        const recordGross = val.base + val.service + val.extraSurcharge + val.avaVirtual;
+        totalGrossVerified += recordGross;
+      }
+    });
+
+    const difference = Math.abs(results.all.gross - totalGrossVerified);
+    // If difference > 1 peso, mark as invalid
+    if (difference > 1) {
+      setExtractVerified({ 
+        isValid: false, 
+        errorRecords: ["Posible desincronización en la distribución de horas trisemanales. Verifica el orden de los registros."] 
+      });
+    } else {
+      setExtractVerified({ isValid: true, errorRecords: [] });
+    }
+  }, [records, results.all.gross, results.all.recordDistributions, results.calculationRates]);
   const [showDeductionDetails, setShowDeductionDetails] = useState(false);
   const [showIncomeDetails, setShowIncomeDetails] = useState(false);
   const [originalRecord, setOriginalRecord] = useState<ShiftRecord | null>(null);
-
-  const periodsWithLiveTotals = useMemo(() => {
-    return periods.map(p => {
-      // Find all records belonging to this period
-      const recordsForP = allRecords.filter(r => 
-        r.periodId === p.id || (!r.periodId && r.date >= p.startDate && r.date <= p.endDate)
-      );
-      
-      // Find all deductions for this period
-      const applicableDeductions = allDeductions.filter(d => d.periodId === p.id);
-      
-      // Use the rates stored in the period (if any) or current global rates
-      const pRates = p.rates || rates;
-      
-      // Calculate totals on the fly
-      const totals = calculatePeriodTotals(
-        recordsForP,
-        pRates,
-        applicableDeductions,
-        periods,
-        p.id,
-        allRecords,
-        trisemanas
-      );
-      
-      return {
-        ...p,
-        liveGross: totals.gross,
-        liveNet: totals.net,
-        livePatrimonial: totals.totalPatrimonial,
-        liveNetCash: totals.netCash,
-        liveDeductions: totals.totalDeductions
-      };
-    });
-  }, [periods, allRecords, allDeductions, rates, trisemanas]);
-
   const registrationRef = useRef<HTMLDivElement>(null);
   const [confirmDialog, setConfirmDialog] = useState<{
     title?: string;
@@ -1610,6 +1852,81 @@ function MainApp() {
     setShowPeriodModal(true);
   };
 
+  const openHistoricalModal = () => {
+    const lastMonth = new Date();
+    lastMonth.setMonth(lastMonth.getMonth() - 1);
+    setHistoricalData({
+      name: lastMonth.toLocaleString('es-ES', { month: 'long', year: 'numeric' }),
+      gross: rates.payroll.avgBilling12Months || 0,
+      month: lastMonth.getMonth() + 1,
+      year: lastMonth.getFullYear()
+    });
+    setShowHistoricalModal(true);
+  };
+
+  const saveHistoricalPeriod = async () => {
+    if (!user) return;
+    
+    const startDate = `${historicalData.year}-${String(historicalData.month).padStart(2, '0')}-01`;
+    const endDate = new Date(historicalData.year, historicalData.month, 0).toISOString().split('T')[0];
+    
+    const manualGross = historicalData.gross;
+    const manualPrima = manualGross / 12;
+    const manualCesantias = manualGross / 12;
+    const manualInterest = manualCesantias * 0.12;
+    const manualVacations = manualGross / 24;
+
+    const newPeriod: BillingPeriod = {
+      id: crypto.randomUUID(),
+      userId: user.uid,
+      name: historicalData.name || `${historicalData.year}-${historicalData.month}`,
+      startDate,
+      endDate,
+      status: 'archived',
+      createdAt: new Date().toISOString(),
+      totalGross: manualGross,
+      totalGrossWithBenefits: manualGross + manualPrima + manualCesantias + manualInterest + manualVacations,
+      totalDeductions: 0,
+      net: manualGross + manualPrima + manualCesantias + manualInterest + manualVacations,
+      primaProporcional: manualPrima,
+      cesantiasProporcional: manualCesantias,
+      interesesCesantias: manualInterest,
+      vacacionesProporcional: manualVacations,
+      rates: rates
+    };
+
+    const periodPath = `users/${user.uid}/periods/${newPeriod.id}`;
+    await setDoc(doc(db, periodPath), newPeriod).catch(err => 
+      handleFirestoreError(err, OperationType.CREATE, periodPath)
+    );
+    
+    setShowHistoricalModal(false);
+    showToast("Periodo histórico registrado.");
+  };
+
+  const archiveActivePeriod = async () => {
+    if (!user || !activePeriod) return;
+    
+    try {
+      const path = `users/${user.uid}/periods/${activePeriod.id}`;
+      await updateDoc(doc(db, path), {
+        status: 'archived',
+        totalGross: results.all.gross,
+        totalGrossWithBenefits: results.all.totalPatrimonial,
+        totalDeductions: results.all.totalDeductions,
+        net: results.all.net,
+        primaProporcional: results.all.primaProporcional,
+        vacacionesProporcional: results.all.vacacionesProporcional,
+        cesantiasProporcional: results.all.cesantiasProporcional,
+        interesesCesantias: results.all.interesesCesantias,
+        rates: rates
+      });
+      showToast("Periodo guardado y archivado correctamente.", 'success');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}/periods/${activePeriod.id}`);
+    }
+  };
+
   const openEditTrisemana = (trisemana: Trisemana) => {
     setEditingTrisemana(trisemana);
     setNewTrisemanaData({
@@ -1725,6 +2042,7 @@ function MainApp() {
       isAVAShift: false,
       isVirtualShift: false,
       isExtraShift: false,
+      isAdditionalShift: false,
       extraHoursType: 'consultation'
     });
     setQuantities({
@@ -1761,6 +2079,7 @@ function MainApp() {
             : records.find(r => r.id === editingId)?.isDefinitive) || false 
         : false,
       isExtraShift: shift.isExtraShift,
+      isAdditionalShift: shift.isAdditionalShift,
       isHolidayStart: shift.isHolidayStart,
       isHolidayEnd: shift.isHolidayEnd,
       isAVAShift: shift.isAVAShift,
@@ -2031,6 +2350,74 @@ function MainApp() {
       handleFirestoreError(error, OperationType.UPDATE, path);
     }
   };
+  
+  const toggleAdditionalShift = async (id: string) => {
+    if (!user) return;
+    const baseRecords = viewingArchive ? viewingArchive.records : records;
+    const record = baseRecords.find(r => r.id === id);
+    if (!record) return;
+
+    const newStatus = !record.isAdditionalShift;
+
+    if (viewingArchive) {
+      setViewingArchive({
+        ...viewingArchive,
+        records: viewingArchive.records.map(r => 
+          r.id === id ? { ...r, isAdditionalShift: newStatus } : r
+        )
+      });
+      const path = `users/${user.uid}/records/${id}`;
+      try { await updateDoc(doc(db, path), { isAdditionalShift: newStatus }); } catch (e) {}
+      return;
+    }
+
+    const path = `users/${user.uid}/records/${id}`;
+    try {
+      await updateDoc(doc(db, path), { isAdditionalShift: newStatus });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, path);
+    }
+  };
+
+  const toggleAllRecordsStatus = async () => {
+    if (!user || records.length === 0) return;
+    
+    // Determine target status: if all are definitive, set to false. Otherwise, set all to true.
+    const allDefinitive = records.every(r => r.isDefinitive);
+    const targetStatus = !allDefinitive;
+
+    setConfirmDialog({
+      title: targetStatus ? 'Marcar Todo como Definitivo' : 'Desmarcar Todo',
+      message: `¿Estás seguro de que deseas marcar los ${records.length} registros del periodo como ${targetStatus ? 'DEFINITIVOS' : 'PROYECTADOS'}?`,
+      confirmLabel: 'Confirmar Acción',
+      onConfirm: async () => {
+        try {
+          const batch = writeBatch(db);
+          records.forEach(r => {
+            const path = `users/${user.uid}/records/${r.id}`;
+            batch.update(doc(db, path), { isDefinitive: targetStatus });
+          });
+          await batch.commit();
+          showToast(`Registros actualizados a ${targetStatus ? 'Definitivos' : 'Proyectados'}.`);
+        } catch (error) {
+          console.error("Error bulk updating status:", error);
+          showToast("Error al actualizar registros.", 'error');
+        }
+      }
+    });
+  };
+
+  const confirmLogout = () => {
+    setConfirmDialog({
+      title: 'Cerrar Sesión',
+      message: '¿Estás seguro de que deseas salir de la aplicación? Tus datos están guardados en la nube.',
+      confirmLabel: 'Cerrar Sesión',
+      type: 'delete',
+      onConfirm: () => {
+        logout();
+      }
+    });
+  };
 
   const editRecord = (record: ShiftRecord) => {
     setConfirmDialog({
@@ -2050,6 +2437,7 @@ function MainApp() {
           isAVAShift: record.isAVAShift || false,
           isVirtualShift: record.isVirtualShift || false,
           isExtraShift: record.isExtraShift || false,
+          isAdditionalShift: record.isAdditionalShift || false,
           extraHoursType: record.extraHoursType || 'consultation'
         });
         setManualTrisemanaId(record.trisemanaId || null);
@@ -2070,79 +2458,168 @@ function MainApp() {
   const exportToPDF = () => {
     const doc = new jsPDF();
     const period = periods.find(p => p.id === selectedPeriodId);
+    const baseRecords = viewingArchive ? viewingArchive.records : records;
     const periodName = period?.name || 'Extracto de Pago';
     const dateRange = period ? `${period.startDate} a ${period.endDate}` : '';
+    const semester = new Date().getMonth() < 6 ? '1' : '2';
     
     // Header
-    doc.setFontSize(20);
-    doc.setTextColor(30, 41, 59); // slate-800
-    doc.text('EXTRACTO DE PAGO / NÓMINA', 14, 22);
+    doc.setFontSize(22);
+    doc.setTextColor(15, 23, 42); // slate-900
+    doc.setFont('helvetica', 'bold');
+    doc.text('EXTRACTO TÉCNICO DE PAGO', 14, 22);
     
-    doc.setFontSize(10);
+    doc.setFontSize(8);
     doc.setTextColor(100, 116, 139); // slate-500
-    doc.text(`Generado el: ${new Date().toLocaleString()}`, 14, 30);
-    doc.text(`Periodo: ${periodName} (${dateRange})`, 14, 35);
-    doc.text(`Cargo: ${rates.payroll.jobTitle}`, 14, 40);
-    doc.text(`Usuario: ${user?.email || 'N/A'}`, 14, 45);
+    doc.setFont('helvetica', 'normal');
+    doc.text('LIQUIDACIÓN OFICIAL DE HONORARIOS Y PRESTACIONES', 14, 27);
+    
+    doc.setFontSize(9);
+    doc.setTextColor(30, 41, 59); // slate-800
+    const headerInfo = [
+      `Periodo: ${periodName}`,
+      `Rango: ${dateRange}`,
+      `Cargo: ${rates.payroll.jobTitle}`,
+      `Usuario: ${user?.email || 'N/A'}`,
+      `Generado: ${new Date().toLocaleString()}`
+    ];
+    headerInfo.forEach((text, i) => doc.text(text, 14, 35 + (i * 5)));
 
-    // Summary Table
-    const summaryData = [
-      ['Concepto', 'Valor'],
-      ['Sueldo Básico (Turnos)', formatCurrency(results.definitive.gross)],
-      ['Prima Proporcional', formatCurrency(results.definitive.primaProporcional)],
-      ['Cesantías Proporcionales', formatCurrency(results.definitive.cesantiasProporcional)],
-      ['Intereses Cesantías', formatCurrency(results.definitive.interesesCesantias)],
-      ['Vacaciones Proporcionales', formatCurrency(results.definitive.vacacionesProporcional)],
-      ['TOTAL PATRIMONIAL', formatCurrency(results.definitive.totalPatrimonial)],
-      ['', ''],
-      ['Salud (4%)', `-${formatCurrency(results.definitive.health)}`],
-      ['Pensión (4%)', `-${formatCurrency(results.definitive.pension)}`],
-      ['Caja de Compensación', formatCurrency(results.definitive.caja)],
-      ['FSP', results.definitive.fsp > 0 ? `-${formatCurrency(results.definitive.fsp)}` : '$0'],
-      ['Retención en la Fuente', results.definitive.retefuente > 0 ? `-${formatCurrency(results.definitive.retefuente)}` : '$0'],
-      ['Otras Deducciones', results.definitive.additionalDeductions > 0 ? `-${formatCurrency(results.definitive.additionalDeductions)}` : '$0'],
-      ['TOTAL DEDUCCIONES', `-${formatCurrency(results.definitive.totalDeductions)}`],
-      ['', ''],
-      ['NETO A RECIBIR (CAJA)', formatCurrency(results.definitive.netCash)],
+    // 1. Resumen de Devengado
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text('1. DESGLOSE DE INGRESOS (DEVENGADO)', 14, 65);
+    
+    const incomeData = [
+      ['Concepto', 'Detalle/Horas', 'Valor'],
+      ['Consulta y Horas Libres', `${results.definitive.hoursBreakdown.day + results.definitive.hoursBreakdown.night + results.definitive.hoursBreakdown.holidayDay + results.definitive.hoursBreakdown.holidayNight}h Totales`, formatCurrency(results.definitive.grossBreakdown.consultationBase)],
+      ['AVA / Virtual', `${results.definitive.avaBreakdown.day + results.definitive.avaBreakdown.night + results.definitive.avaBreakdown.holidayDay + results.definitive.avaBreakdown.holidayNight}h Totales`, formatCurrency(results.definitive.grossBreakdown.ava)],
+      ['Productividad (Pacientes)', `${results.definitive.totalMonthlyPatients} Pacientes`, formatCurrency(results.definitive.grossBreakdown.service)],
+      ['SUBTOTAL BRUTO', '', formatCurrency(results.definitive.gross)],
     ];
 
     (doc as any).autoTable({
-      startY: 50,
-      head: [summaryData[0]],
-      body: summaryData.slice(1),
-      theme: 'striped',
-      headStyles: { fillColor: [30, 41, 59], textColor: 255 },
-      columnStyles: {
-        1: { halign: 'right', fontStyle: 'bold' }
-      }
+      startY: 68,
+      head: [incomeData[0]],
+      body: incomeData.slice(1, 4),
+      foot: [incomeData[4]],
+      theme: 'grid',
+      headStyles: { fillColor: [15, 23, 42], textColor: 255 },
+      footStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold' },
+      columnStyles: { 2: { halign: 'right' } }
     });
 
-    // Detailed Records Table
-    doc.addPage();
-    doc.setFontSize(16);
-    doc.text('DETALLE DE TURNOS', 14, 22);
+    // 2. Discriminación de Horas
+    const nextY = (doc as any).lastAutoTable.finalY + 10;
+    doc.setFontSize(12);
+    doc.text('2. DISCRIMINACIÓN DE TURNOS', 14, nextY);
+    
+    const hourData = [
+      ['Tipo', 'Diurnas', 'Nocturnas', 'Festivas Diu', 'Festivas Noc', 'Totales'],
+      ['Consulta', results.definitive.hoursBreakdown.day.toFixed(1), results.definitive.hoursBreakdown.night.toFixed(1), results.definitive.hoursBreakdown.holidayDay.toFixed(1), results.definitive.hoursBreakdown.holidayNight.toFixed(1), (results.definitive.hoursBreakdown.day + results.definitive.hoursBreakdown.night + results.definitive.hoursBreakdown.holidayDay + results.definitive.hoursBreakdown.holidayNight).toFixed(1)],
+      ['AVA / Virt', results.definitive.avaBreakdown.day.toFixed(1), results.definitive.avaBreakdown.night.toFixed(1), results.definitive.avaBreakdown.holidayDay.toFixed(1), results.definitive.avaBreakdown.holidayNight.toFixed(1), (results.definitive.avaBreakdown.day + results.definitive.avaBreakdown.night + results.definitive.avaBreakdown.holidayDay + results.definitive.avaBreakdown.holidayNight).toFixed(1)],
+    ];
 
-    const recordsData = (viewingArchive ? viewingArchive.records : records).map(r => {
-      const isAVAMain = r.isAVAShift || r.isVirtualShift || (Object.values(r.ava || {}).some(v => v > 0) && Object.values(r.hours || {}).every(v => v === 0));
-      const h = isAVAMain ? { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 } : r.hours;
-      const a = isAVAMain ? r.ava : { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 };
+    (doc as any).autoTable({
+      startY: nextY + 3,
+      head: [hourData[0]],
+      body: hourData.slice(1),
+      theme: 'striped',
+      headStyles: { fillColor: [51, 65, 85] },
+      styles: { fontSize: 8 }
+    });
+
+    // 3. Deducciones
+    const dedY = (doc as any).lastAutoTable.finalY + 10;
+    doc.setFontSize(12);
+    doc.text('3. DEDUCCIONES LEGALES', 14, dedY);
+    
+    const deductionData = [
+      ['Concepto', 'Base / Porcentaje', 'Valor'],
+      ['Aporte Salud', `4% de ${formatCurrency(results.definitive.ibc)}`, `-${formatCurrency(results.definitive.taxBreakdown.health)}`],
+      ['Aporte Pensión', `4% de ${formatCurrency(results.definitive.ibc)}`, `-${formatCurrency(results.definitive.taxBreakdown.pension)}`],
+      ['Retención en la Fuente', 'Según procedimiento', `-${formatCurrency(results.definitive.retefuente)}`],
+      ['Fondo Solidaridad', results.definitive.taxBreakdown.fsp > 0 ? 'Aplicado' : 'N/A', `-${formatCurrency(results.definitive.taxBreakdown.fsp)}`],
+      ['Otras Deducciones', 'Manuales', `-${formatCurrency(results.definitive.taxBreakdown.additionalDeductions)}`],
+      ['TOTAL DEDUCCIONES', '', `-${formatCurrency(results.definitive.totalDeductions)}`],
+    ];
+
+    (doc as any).autoTable({
+      startY: dedY + 3,
+      head: [deductionData[0]],
+      body: deductionData.slice(1, 6),
+      foot: [deductionData[6]],
+      theme: 'grid',
+      headStyles: { fillColor: [153, 27, 27] },
+      footStyles: { fillColor: [254, 242, 242], textColor: [153, 27, 27] },
+      columnStyles: { 2: { halign: 'right' } }
+    });
+
+    // 4. Beneficios Sociales
+    const benY = (doc as any).lastAutoTable.finalY + 10;
+    doc.text(`4. PRESTACIONES SOCIALES (SEMESTRE ${semester})`, 14, benY);
+    
+    const benefitData = [
+      ['Concepto', 'Descripción', 'Valor Acumulado'],
+      [`Prima de Servicios S${semester}`, `Cálculo proporcional mensual`, formatCurrency(results.definitive.primaProporcional)],
+      ['Cesantías', 'Ahorro prestacional', formatCurrency(results.definitive.cesantiasProporcional)],
+      ['Intereses Cesantías', '12% anual (1% mensual)', formatCurrency(results.definitive.interesesCesantias)],
+      ['Vacaciones', 'Descanso remunerado', formatCurrency(results.definitive.vacacionesProporcional)],
+      ['TOTAL PATRIMONIAL ACUMULADO', '', formatCurrency(results.definitive.primaProporcional + results.definitive.cesantiasProporcional + results.definitive.interesesCesantias + results.definitive.vacacionesProporcional)],
+    ];
+
+    (doc as any).autoTable({
+      startY: benY + 3,
+      head: [benefitData[0]],
+      body: benefitData.slice(1, 5),
+      foot: [benefitData[5]],
+      theme: 'grid',
+      headStyles: { fillColor: [30, 58, 138] },
+      footStyles: { fillColor: [238, 242, 255], textColor: [30, 58, 138] },
+      columnStyles: { 2: { halign: 'right' } }
+    });
+
+    // Final Net
+    const netY = (doc as any).lastAutoTable.finalY + 15;
+    doc.setFillColor(15, 23, 42);
+    doc.rect(14, netY, 182, 20, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(14);
+    doc.text('TOTAL NETO A RECIBIR (CAJA):', 20, netY + 13);
+    doc.setFontSize(18);
+    doc.text(formatCurrency(results.definitive.netCash), 190, netY + 13, { align: 'right' });
+
+    // 5. Listado Detallado de Turnos (La "Discriminación" solicitada)
+    doc.addPage();
+    doc.setTextColor(15, 23, 42);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('5. ANEXO: LISTADO DETALLADO DE TURNOS', 14, 20);
+    
+    const detailedRecords = baseRecords.map(r => {
+      const isAVAMain = r.isAVAShift || r.isVirtualShift || (Object.values(r.ava || {}).some(v => (v as number) > 0) && Object.values(r.hours || {}).every(v => v === 0));
+      const dist = results.all.recordDistributions[r.id];
+      const val = calculateShiftValue({ ...r, isAVAShift: isAVAMain }, results.calculationRates, dist);
+      const totalHours = (dist?.ord.day || 0) + (dist?.ord.night || 0) + (dist?.ord.holidayDay || 0) + (dist?.ord.holidayNight || 0) +
+                         (dist?.extra.day || 0) + (dist?.extra.night || 0) + (dist?.extra.holidayDay || 0) + (dist?.extra.holidayNight || 0);
       
       return [
         r.date,
         `${r.startTime}-${r.endTime}`,
-        `${h.day}/${h.night}/${h.holidayDay}/${h.holidayNight}/${h.extraDay}/${h.extraNight}/${h.extraHolidayDay}/${h.extraHolidayNight}`,
-        `${a.day}/${a.night}/${a.holidayDay}/${a.holidayNight}/${a.extraDay}/${a.extraNight}/${a.extraHolidayDay}/${a.extraHolidayNight}`,
-        r.applyPatients ? `${r.patients.day}/${r.patients.night}/${r.patients.holidayDay}/${r.patients.holidayNight}` : 'N/A',
+        isAVAMain ? 'AVA/Virt' : 'Consul.',
+        totalHours.toFixed(1),
+        r.applyPatients ? (r.patients.day + r.patients.night + r.patients.holidayDay + r.patients.holidayNight) : 'H',
+        formatCurrency(val.base + val.service + val.avaVirtual)
       ];
     });
 
     (doc as any).autoTable({
-      startY: 30,
-      head: [['Fecha', 'Horario', 'H. Consulta', 'H. AVA/Virtual', 'Pacientes']],
-      body: recordsData,
-      theme: 'grid',
-      headStyles: { fillColor: [71, 85, 105], fontSize: 7 },
-      styles: { fontSize: 6 }
+      startY: 25,
+      head: [['Fecha', 'Horario', 'Tipo', 'Hrs', 'Pac.', 'Bruto']],
+      body: detailedRecords,
+      theme: 'striped',
+      styles: { fontSize: 7 },
+      headStyles: { fillColor: [51, 65, 85] }
     });
 
     doc.save(`Extracto_${periodName.replace(/\s+/g, '_')}.pdf`);
@@ -2243,14 +2720,14 @@ function MainApp() {
       const path = `users/${user.uid}/periods/${period.id}`;
       try {
         await updateDoc(doc(db, path), {
-          totalGross: results.all.gross,
-          totalGrossWithBenefits: results.all.totalPatrimonial,
-          totalDeductions: results.all.totalDeductions,
-          net: results.all.net,
-          primaProporcional: results.all.primaProporcional,
-          vacacionesProporcional: results.all.vacacionesProporcional,
-          cesantiasProporcional: results.all.cesantiasProporcional,
-          interesesCesantias: results.all.interesesCesantias,
+          totalGross: results.definitive.gross,
+          totalGrossWithBenefits: results.definitive.totalPatrimonial,
+          totalDeductions: results.definitive.totalDeductions,
+          net: results.definitive.net,
+          primaProporcional: results.definitive.primaProporcional,
+          vacacionesProporcional: results.definitive.vacacionesProporcional,
+          cesantiasProporcional: results.definitive.cesantiasProporcional,
+          interesesCesantias: results.definitive.interesesCesantias,
           updatedAt: new Date().toISOString()
         });
         showToast("Cambios guardados en el periodo.");
@@ -2411,102 +2888,6 @@ function MainApp() {
     });
   };
 
-  // --- Calculations ---
-  const results = useMemo(() => {
-    const baseRecords = viewingArchive ? viewingArchive.records : records;
-    const currentPeriod = periods.find(p => p.id === selectedPeriodId);
-    
-    // Normalize calculation rates to ensure all fields exist
-    // IMPORTANT: For active periods, always use global rates to allow live editing
-    const rawRates = viewingArchive 
-      ? viewingArchive.rates 
-      : (currentPeriod && currentPeriod.status === 'archived' ? (currentPeriod.rates || rates) : rates);
-    const calculationRates = normalizeRates(rawRates);
-
-    let recordsToCalculate = [...baseRecords];
-    let allRecordsToCalculate = [...allRecords];
-
-    // Real-time projection: if we are not editing (meaning we are adding), 
-    // and the current form has a date, inject it as a projection if it's not already in recordsToCalculate
-    if (editingId) {
-      const currentFormRecord: ShiftRecord = {
-        id: editingId,
-        userId: user?.uid || '',
-        periodId: selectedPeriodId || undefined,
-        date: shift.date,
-        startTime: shift.startTime,
-        endTime: shift.endTime,
-        hours: { ...quantities.hours },
-        ava: { ...quantities.ava },
-        patients: { ...quantities.patients },
-        applyPatients: quantities.applyPatients,
-        isDefinitive: (viewingArchive 
-          ? viewingArchive.records.find(r => r.id === editingId)?.isDefinitive 
-          : records.find(r => r.id === editingId)?.isDefinitive) || false,
-        isExtraShift: shift.isExtraShift,
-        isHolidayStart: shift.isHolidayStart,
-        isHolidayEnd: shift.isHolidayEnd,
-        isAVAShift: shift.isAVAShift,
-        isVirtualShift: shift.isVirtualShift,
-        extraHoursType: shift.extraHoursType
-      };
-      recordsToCalculate = recordsToCalculate.map(r => r.id === editingId ? currentFormRecord : r);
-      allRecordsToCalculate = allRecordsToCalculate.map(r => r.id === editingId ? currentFormRecord : r);
-    } else if (shift.date) {
-      // Logic for real-time adding projection
-      const draftRecord: ShiftRecord = {
-        id: 'draft-temp-id',
-        userId: user?.uid || '',
-        periodId: selectedPeriodId || undefined,
-        date: shift.date,
-        startTime: shift.startTime,
-        endTime: shift.endTime,
-        hours: { ...quantities.hours },
-        ava: { ...quantities.ava },
-        patients: { ...quantities.patients },
-        applyPatients: quantities.applyPatients,
-        isDefinitive: false, // Draft is always a projection
-        isExtraShift: shift.isExtraShift,
-        isHolidayStart: shift.isHolidayStart,
-        isHolidayEnd: shift.isHolidayEnd,
-        isAVAShift: shift.isAVAShift,
-        isVirtualShift: shift.isVirtualShift,
-        extraHoursType: shift.extraHoursType
-      };
-      recordsToCalculate = [...recordsToCalculate, draftRecord];
-      allRecordsToCalculate = [...allRecordsToCalculate, draftRecord];
-    }
-
-    const allResults = calculatePeriodTotals(
-      recordsToCalculate,
-      calculationRates,
-      additionalDeductions,
-      periods,
-      selectedPeriodId,
-      allRecordsToCalculate,
-      trisemanas
-    );
-
-    const definitiveRecords = recordsToCalculate.filter(r => r.isDefinitive);
-    const definitiveAllRecords = allRecordsToCalculate.filter(r => r.isDefinitive);
-
-    const definitiveResults = calculatePeriodTotals(
-      definitiveRecords,
-      calculationRates,
-      additionalDeductions,
-      periods,
-      selectedPeriodId,
-      definitiveAllRecords,
-      trisemanas
-    );
-
-    return {
-      all: allResults,
-      definitive: definitiveResults,
-      calculationRates
-    };
-  }, [records, viewingArchive, periods, selectedPeriodId, rates, additionalDeductions, editingId, shift, quantities, user, allRecords, trisemanas]);
-
   if (!isAuthReady) {
     return (
       <div className="min-h-screen-ios bg-slate-50 flex items-center justify-center">
@@ -2596,7 +2977,7 @@ function MainApp() {
             <span className="text-xs font-bold text-slate-600 truncate max-w-[100px]">{user.displayName}</span>
           </div>
           <button 
-            onClick={logout}
+            onClick={confirmLogout}
             className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
             title="Cerrar sesión"
           >
@@ -2957,14 +3338,49 @@ function MainApp() {
               </div>
             </section>
 
-            <section>
-              <div className="flex items-center gap-2 mb-4 text-indigo-600">
-                <Settings className="w-4 h-4" />
-                <h2 className="text-sm font-bold uppercase tracking-widest">Valores de Contrato</h2>
+            <section id="config-section" className="relative">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2 text-indigo-600">
+                  <Settings className="w-4 h-4" />
+                  <h2 className="text-sm font-bold uppercase tracking-widest">Valores de Contrato</h2>
+                </div>
+                
+                {isConfigLocked ? (
+                  <button 
+                    onClick={handleEnableConfigEdit}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl text-[10px] font-black uppercase hover:bg-amber-100 transition-all shadow-sm"
+                  >
+                    <Lock className="w-3 h-3" />
+                    Modificar Configuración
+                  </button>
+                ) : (
+                  <button 
+                    onClick={handleReviewConfigChanges}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-emerald-700 transition-all shadow-lg animate-pulse"
+                  >
+                    <Save className="w-3 h-3" />
+                    Guardar Cambios
+                  </button>
+                )}
               </div>
+              
               <p className="text-xs text-slate-500 mb-6 leading-relaxed">Configura las tarifas acordadas por hora y por paciente según tu contrato.</p>
 
-              <div className="space-y-6">
+              {!isConfigLocked && (
+                <motion.div 
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mb-6 p-4 bg-indigo-50 border border-indigo-100 rounded-2xl flex items-start gap-3"
+                >
+                  <Info className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="text-[10px] font-black text-indigo-800 uppercase">Modo Edición Activo</h4>
+                    <p className="text-[10px] text-indigo-600 font-medium">Los cambios que realices afectarán inmediatamente los cálculos en pantalla, pero deben ser confirmados para guardarse permanentemente.</p>
+                  </div>
+                </motion.div>
+              )}
+
+              <div className={`space-y-6 transition-all ${isConfigLocked ? 'opacity-80 grayscale-[0.5] pointer-events-none select-none' : ''}`}>
                 <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Recargos de Ley (Colombia 2026)</h3>
@@ -3009,6 +3425,7 @@ function MainApp() {
                             type="number"
                             step="0.01"
                             value={rates.base[item.key as keyof Rates['base']] || 0}
+                            disabled={isConfigLocked}
                             onChange={(e) => {
                               const val = Number(e.target.value);
                               const newBase = { ...rates.base, [item.key]: val };
@@ -3039,7 +3456,7 @@ function MainApp() {
                                 }
                               });
                             }}
-                            className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-7 pr-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-mono"
+                            className={`w-full bg-white border border-slate-200 rounded-xl py-2 pl-7 pr-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-mono ${isConfigLocked ? 'bg-slate-50 cursor-not-allowed opacity-75' : ''}`}
                           />
                         </div>
                       </div>
@@ -3060,6 +3477,7 @@ function MainApp() {
                           type="number" 
                           step="0.01"
                           value={rates.hourly.day || 0}
+                          disabled={isConfigLocked}
                           onChange={(e) => {
                             const base = Number(e.target.value);
                             setRates({
@@ -3076,7 +3494,7 @@ function MainApp() {
                               }
                             });
                           }}
-                          className="w-full bg-white border border-indigo-200 rounded-xl py-2 pl-7 pr-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-mono font-bold"
+                          className={`w-full bg-white border border-indigo-200 rounded-xl py-2 pl-7 pr-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-mono font-bold ${isConfigLocked ? 'bg-slate-50 cursor-not-allowed opacity-75' : ''}`}
                         />
                       </div>
                       <p className="text-[9px] text-slate-400 mt-1 italic">Calcula recargos según configuración superior</p>
@@ -3102,11 +3520,12 @@ function MainApp() {
                             type="number"
                             step="0.01"
                             value={rates.hourly[item.key as keyof Rates['hourly']] || 0}
+                            disabled={isConfigLocked}
                             onChange={(e) => setRates({
                               ...rates,
                               hourly: { ...rates.hourly, [item.key]: Number(e.target.value) }
                             })}
-                            className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-7 pr-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-mono"
+                            className={`w-full bg-white border border-slate-200 rounded-xl py-2 pl-7 pr-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-mono ${isConfigLocked ? 'bg-slate-50 cursor-not-allowed opacity-75' : ''}`}
                           />
                         </div>
                       </div>
@@ -3127,6 +3546,7 @@ function MainApp() {
                           type="number" 
                           step="0.01"
                           value={rates.ava.day}
+                          disabled={isConfigLocked}
                           onChange={(e) => {
                             const base = Number(e.target.value);
                             setRates({
@@ -3143,7 +3563,7 @@ function MainApp() {
                               }
                             });
                           }}
-                          className="w-full bg-white border border-indigo-200 rounded-xl py-2 pl-7 pr-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-mono font-bold"
+                          className={`w-full bg-white border border-indigo-200 rounded-xl py-2 pl-7 pr-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-mono font-bold ${isConfigLocked ? 'bg-slate-50 cursor-not-allowed opacity-75' : ''}`}
                         />
                       </div>
                       <p className="text-[9px] text-slate-400 mt-1 italic">Calcula recargos según configuración superior</p>
@@ -3169,11 +3589,12 @@ function MainApp() {
                             type="number"
                             step="0.01"
                             value={rates.ava[item.key as keyof Rates['ava']]}
+                            disabled={isConfigLocked}
                             onChange={(e) => setRates({
                               ...rates,
                               ava: { ...rates.ava, [item.key]: Number(e.target.value) }
                             })}
-                            className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-7 pr-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-mono"
+                            className={`w-full bg-white border border-slate-200 rounded-xl py-2 pl-7 pr-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-mono ${isConfigLocked ? 'bg-slate-50 cursor-not-allowed opacity-75' : ''}`}
                           />
                         </div>
                       </div>
@@ -3198,11 +3619,12 @@ function MainApp() {
                             type="number"
                             step="0.01"
                             value={rates.patient[item.key as keyof Rates['patient']]}
+                            disabled={isConfigLocked}
                             onChange={(e) => setRates({
                               ...rates,
                               patient: { ...rates.patient, [item.key]: Number(e.target.value) }
                             })}
-                            className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-7 pr-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-mono"
+                            className={`w-full bg-white border border-slate-200 rounded-xl py-2 pl-7 pr-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-mono ${isConfigLocked ? 'bg-slate-50 cursor-not-allowed opacity-75' : ''}`}
                           />
                         </div>
                       </div>
@@ -3214,7 +3636,8 @@ function MainApp() {
                     <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Deducciones Adicionales ($)</h3>
                     <button 
                       onClick={addDeduction}
-                      className="p-1.5 bg-indigo-100 text-indigo-600 rounded-lg hover:bg-indigo-200 transition-colors"
+                      disabled={isConfigLocked}
+                      className={`p-1.5 bg-indigo-100 text-indigo-600 rounded-lg hover:bg-indigo-200 transition-colors ${isConfigLocked ? 'opacity-50 cursor-not-allowed grayscale' : ''}`}
                       title="Agregar concepto de deducción"
                     >
                       <Plus className="w-3.5 h-3.5" />
@@ -3274,8 +3697,9 @@ function MainApp() {
                                 <input 
                                   type="number"
                                   value={deduction.amount}
+                                  disabled={isConfigLocked}
                                   onChange={(e) => updateDeduction(deduction.id, 'amount', Number(e.target.value))}
-                                  className="w-full bg-slate-50 border border-slate-100 rounded-lg py-1 pl-5 pr-3 text-xs focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono"
+                                  className={`w-full bg-slate-50 border border-slate-100 rounded-lg py-1 pl-5 pr-3 text-xs focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono ${isConfigLocked ? 'cursor-not-allowed opacity-75' : ''}`}
                                 />
                               </div>
                             </div>
@@ -3301,11 +3725,12 @@ function MainApp() {
                       <input 
                         type="text"
                         value={rates.payroll.jobTitle || ''}
+                        disabled={isConfigLocked}
                         onChange={(e) => setRates({
                           ...rates,
                           payroll: { ...rates.payroll, jobTitle: e.target.value }
                         })}
-                        className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                        className={`w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all ${isConfigLocked ? 'bg-slate-50 cursor-not-allowed opacity-75' : ''}`}
                         placeholder="Ej: MEDICO CONSULTA 2 MED"
                       />
                     </div>
@@ -3322,11 +3747,12 @@ function MainApp() {
                       <input 
                         type="number"
                         value={rates.payroll.uvtValue || 0}
+                        disabled={isConfigLocked}
                         onChange={(e) => setRates({
                           ...rates,
                           payroll: { ...rates.payroll, uvtValue: Number(e.target.value) }
                         })}
-                        className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono"
+                        className={`w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono ${isConfigLocked ? 'bg-slate-50 cursor-not-allowed opacity-75' : ''}`}
                       />
                     </div>
                     <div className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-xl">
@@ -3347,11 +3773,12 @@ function MainApp() {
                         min="1"
                         max="31"
                         value={rates.payroll.billingCutoffDay || 0}
+                        disabled={isConfigLocked}
                         onChange={(e) => setRates({
                           ...rates,
                           payroll: { ...rates.payroll, billingCutoffDay: Number(e.target.value) }
                         })}
-                        className="w-16 bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-xs text-right focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono"
+                        className={`w-16 bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-xs text-right focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono ${isConfigLocked ? 'bg-slate-100 cursor-not-allowed' : ''}`}
                       />
                     </div>
                     <div className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-xl">
@@ -3370,11 +3797,12 @@ function MainApp() {
                       <input 
                         type="checkbox"
                         checked={rates.payroll.dependents}
+                        disabled={isConfigLocked}
                         onChange={(e) => setRates({
                           ...rates,
                           payroll: { ...rates.payroll, dependents: e.target.checked }
                         })}
-                        className="w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        className={`w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 ${isConfigLocked ? 'cursor-not-allowed opacity-50' : ''}`}
                       />
                     </div>
                     <div className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-xl">
@@ -3395,11 +3823,12 @@ function MainApp() {
                         min="0"
                         max="23"
                         value={rates.payroll.nightShiftStart || 0}
+                        disabled={isConfigLocked}
                         onChange={(e) => setRates({
                           ...rates,
                           payroll: { ...rates.payroll, nightShiftStart: Number(e.target.value) }
                         })}
-                        className="w-16 bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-xs text-right focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono"
+                        className={`w-16 bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-xs text-right focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono ${isConfigLocked ? 'bg-slate-100 cursor-not-allowed' : ''}`}
                       />
                     </div>
                     <div>
@@ -3431,27 +3860,28 @@ function MainApp() {
                           <input 
                             type="checkbox"
                             checked={rates.payroll.usePrepagada}
+                            disabled={isConfigLocked}
                             onChange={(e) => setRates(prev => ({
                               ...prev,
                               payroll: { ...prev.payroll, usePrepagada: e.target.checked }
                             }))}
-                            className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                            className={`w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 ${isConfigLocked ? 'cursor-not-allowed opacity-50' : ''}`}
                           />
                         </div>
                       </div>
-                        <input 
-                          type="number"
-                          value={rates.payroll.prepagada === 0 ? '' : rates.payroll.prepagada}
-                          onChange={(e) => {
-                            const val = e.target.value === '' ? 0 : Number(e.target.value);
-                            setRates(prev => ({
-                              ...prev,
-                              payroll: { ...prev.payroll, prepagada: val }
-                            }));
-                          }}
-                          disabled={!rates.payroll.usePrepagada}
-                          className={`w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono ${!rates.payroll.usePrepagada ? 'opacity-50 grayscale' : ''}`}
-                        />
+                          <input 
+                            type="number"
+                            value={rates.payroll.prepagada === 0 ? '' : rates.payroll.prepagada}
+                            onChange={(e) => {
+                              const val = e.target.value === '' ? 0 : Number(e.target.value);
+                              setRates(prev => ({
+                                ...prev,
+                                payroll: { ...prev.payroll, prepagada: val }
+                              }));
+                            }}
+                            disabled={!rates.payroll.usePrepagada || isConfigLocked}
+                            className={`w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono ${(!rates.payroll.usePrepagada || isConfigLocked) ? 'opacity-50 grayscale bg-slate-50 cursor-not-allowed' : ''}`}
+                          />
                     </div>
                     <div>
                       <div className="flex items-center justify-between mb-1">
@@ -3482,11 +3912,12 @@ function MainApp() {
                           <input 
                             type="checkbox"
                             checked={rates.payroll.useInteresesVivienda}
+                            disabled={isConfigLocked}
                             onChange={(e) => setRates(prev => ({
                               ...prev,
                               payroll: { ...prev.payroll, useInteresesVivienda: e.target.checked }
                             }))}
-                            className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                            className={`w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 ${isConfigLocked ? 'cursor-not-allowed opacity-50' : ''}`}
                           />
                         </div>
                       </div>
@@ -3500,8 +3931,8 @@ function MainApp() {
                             payroll: { ...prev.payroll, interesesVivienda: val }
                           }));
                         }}
-                        disabled={!rates.payroll.useInteresesVivienda}
-                        className={`w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono ${!rates.payroll.useInteresesVivienda ? 'opacity-50 grayscale' : ''}`}
+                        disabled={!rates.payroll.useInteresesVivienda || isConfigLocked}
+                        className={`w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono ${(!rates.payroll.useInteresesVivienda || isConfigLocked) ? 'opacity-50 grayscale bg-slate-50 cursor-not-allowed' : ''}`}
                       />
                     </div>
                     <div>
@@ -3533,11 +3964,12 @@ function MainApp() {
                           <input 
                             type="checkbox"
                             checked={rates.payroll.usePensionVoluntaria}
+                            disabled={isConfigLocked}
                             onChange={(e) => setRates({
                               ...rates,
                               payroll: { ...rates.payroll, usePensionVoluntaria: e.target.checked }
                             })}
-                            className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                            className={`w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 ${isConfigLocked ? 'cursor-not-allowed opacity-50' : ''}`}
                           />
                         </div>
                       </div>
@@ -3551,8 +3983,8 @@ function MainApp() {
                             payroll: { ...prev.payroll, pensionVoluntaria: val }
                           }));
                         }}
-                        disabled={!rates.payroll.usePensionVoluntaria}
-                        className={`w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono ${!rates.payroll.usePensionVoluntaria ? 'opacity-50 grayscale' : ''}`}
+                        disabled={!rates.payroll.usePensionVoluntaria || isConfigLocked}
+                        className={`w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono ${(!rates.payroll.usePensionVoluntaria || isConfigLocked) ? 'opacity-50 grayscale bg-slate-50 cursor-not-allowed' : ''}`}
                       />
                     </div>
                     <div className="h-px bg-slate-200 my-2" />
@@ -3565,10 +3997,33 @@ function MainApp() {
                         <input 
                           type="checkbox"
                           checked={rates.payroll.useManualRetefuente}
-                          onChange={(e) => setRates({
-                            ...rates,
-                            payroll: { ...rates.payroll, useManualRetefuente: e.target.checked }
-                          })}
+                          disabled={isConfigLocked}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            if (checked) {
+                              setConfirmDialog({
+                                title: "¿Habilitar Retefuente Manual?",
+                                message: "Esto ignorará el cálculo automático de Ley y aplicará un porcentaje fijo sobre el total bruto. ¿Deseas continuar?",
+                                confirmLabel: "Sí, Habilitar",
+                                onConfirm: () => {
+                                  const pctStr = prompt("Ingresa el porcentaje manual deseado (ej: 4, 10):", String(rates.payroll.manualRetefuentePct || 0));
+                                  const pct = parseFloat(pctStr || "0");
+                                  if (!isNaN(pct)) {
+                                    setRates({
+                                      ...rates,
+                                      payroll: { ...rates.payroll, useManualRetefuente: true, manualRetefuentePct: pct }
+                                    });
+                                    showToast(`Retefuente manual establecida en ${pct}%`);
+                                  }
+                                }
+                              });
+                            } else {
+                              setRates({
+                                ...rates,
+                                payroll: { ...rates.payroll, useManualRetefuente: false }
+                              });
+                            }
+                          }}
                           className="w-4 h-4 rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
                         />
                       </div>
@@ -3582,6 +4037,7 @@ function MainApp() {
                                 type="number"
                                 step="0.01"
                                 value={rates.payroll.manualRetefuentePct}
+                                disabled={isConfigLocked}
                                 onChange={(e) => {
                                   const val = e.target.value === '' ? 0 : Number(e.target.value);
                                   setRates(prev => ({
@@ -3589,7 +4045,7 @@ function MainApp() {
                                     payroll: { ...prev.payroll, manualRetefuentePct: val }
                                   }));
                                 }}
-                                className="w-16 bg-transparent text-right text-xs font-bold text-indigo-700 outline-none"
+                                className={`w-16 bg-transparent text-right text-xs font-bold text-indigo-700 outline-none ${isConfigLocked ? 'cursor-not-allowed' : ''}`}
                               />
                               <span className="text-xs font-bold text-indigo-700">%</span>
                             </div>
@@ -3629,6 +4085,7 @@ function MainApp() {
                       <div className="w-full bg-indigo-50 border border-indigo-100 rounded-xl py-2 px-3 text-sm font-mono text-indigo-700 flex items-center justify-between">
                         <span>{formatCurrency(results.all.avg12)}</span>
                         <button
+                          disabled={isConfigLocked}
                           onClick={() => {
                             const today = new Date().toISOString().split('T')[0];
                             setRates({
@@ -3637,7 +4094,7 @@ function MainApp() {
                             });
                             showToast("Ciclo de vacaciones reiniciado correctamente");
                           }}
-                          className="text-[9px] bg-indigo-600 text-white px-2 py-1 rounded-lg hover:bg-indigo-700 transition-colors uppercase font-bold"
+                          className={`text-[9px] bg-indigo-600 text-white px-2 py-1 rounded-lg hover:bg-indigo-700 transition-colors uppercase font-bold ${isConfigLocked ? 'opacity-50 cursor-not-allowed grayscale' : ''}`}
                         >
                           Reiniciar Ciclo
                         </button>
@@ -3650,6 +4107,7 @@ function MainApp() {
                         </span>
                         {rates.payroll.vacationLastResetDate && (
                           <button
+                            disabled={isConfigLocked}
                             onClick={() => {
                               setRates({
                                 ...rates,
@@ -3657,7 +4115,7 @@ function MainApp() {
                               });
                               showToast("Cálculo de vacaciones vuelto a automático");
                             }}
-                            className="text-indigo-600 hover:underline font-bold"
+                            className={`text-indigo-600 hover:underline font-bold ${isConfigLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
                           >
                             Limpiar
                           </button>
@@ -3677,6 +4135,7 @@ function MainApp() {
                       <div className="w-full bg-indigo-50 border border-indigo-100 rounded-xl py-2 px-3 text-sm font-mono text-indigo-700 flex items-center justify-between">
                         <span>{formatCurrency(results.all.primaSemestral)}</span>
                         <button
+                          disabled={isConfigLocked}
                           onClick={() => {
                             const today = new Date().toISOString().split('T')[0];
                             setRates({
@@ -3685,7 +4144,7 @@ function MainApp() {
                             });
                             showToast("Ciclo de prima reiniciado correctamente");
                           }}
-                          className="text-[9px] bg-indigo-600 text-white px-2 py-1 rounded-lg hover:bg-indigo-700 transition-colors uppercase font-bold"
+                          className={`text-[9px] bg-indigo-600 text-white px-2 py-1 rounded-lg hover:bg-indigo-700 transition-colors uppercase font-bold ${isConfigLocked ? 'opacity-50 cursor-not-allowed grayscale' : ''}`}
                         >
                           Reiniciar Ciclo
                         </button>
@@ -3698,6 +4157,7 @@ function MainApp() {
                         </span>
                         {rates.payroll.primaLastResetDate && (
                           <button
+                            disabled={isConfigLocked}
                             onClick={() => {
                               setRates({
                                 ...rates,
@@ -3705,7 +4165,7 @@ function MainApp() {
                               });
                               showToast("Cálculo de prima vuelto a automático");
                             }}
-                            className="text-indigo-600 hover:underline font-bold"
+                            className={`text-indigo-600 hover:underline font-bold ${isConfigLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
                           >
                             Limpiar
                           </button>
@@ -3958,6 +4418,15 @@ function MainApp() {
                     />
                     <span className="text-xs text-slate-600 group-hover:text-slate-900 transition-colors">¿Fin en Festivo?</span>
                   </label>
+                  <label className="flex items-center gap-2 cursor-pointer group pt-2 border-t border-slate-100 mt-2">
+                    <input 
+                      type="checkbox" 
+                      checked={shift.isAdditionalShift}
+                      onChange={(e) => setShift({ ...shift, isAdditionalShift: e.target.checked })}
+                      className="w-4 h-4 rounded border-amber-300 text-amber-600 focus:ring-amber-500"
+                    />
+                    <span className="text-xs font-bold text-amber-600 group-hover:text-amber-700 transition-colors uppercase">Turno Adicional (Amarillo)</span>
+                  </label>
                 </div>
 
                 <div className="lg:col-span-2 flex flex-col justify-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 p-4">
@@ -4155,6 +4624,7 @@ function MainApp() {
                         isAVAShift: false,
                         isVirtualShift: false,
                         isExtraShift: false,
+                        isAdditionalShift: false,
                         extraHoursType: 'consultation',
                       });
                       setQuantities({
@@ -4366,11 +4836,21 @@ function MainApp() {
                       </th>
                       <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Fecha</th>
                       <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Horario</th>
+                      <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-center">Adic.</th>
                       <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Horas Consulta</th>
                       <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Horas AVA/Virtual</th>
                       <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Pacientes</th>
                       <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Valor Turno (B/N)</th>
-                      <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-center">Estado</th>
+                      <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-center">
+                        <button 
+                          onClick={toggleAllRecordsStatus}
+                          className="px-2 py-1 bg-slate-100 hover:bg-indigo-100 text-slate-500 hover:text-indigo-600 rounded-md transition-colors flex items-center gap-1 mx-auto group"
+                          title="Alternar estado definitivo para todos"
+                        >
+                          <CheckCircle2 className="w-3 h-3" />
+                          <span className="text-[8px] font-black uppercase">Todo</span>
+                        </button>
+                      </th>
                       <th className="p-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Acciones</th>
                     </tr>
                   </thead>
@@ -4387,7 +4867,13 @@ function MainApp() {
                             initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
                             exit={{ opacity: 0, x: -20 }}
-                            className={`hover:bg-slate-50/50 transition-colors ${selectedRecordIds.includes(record.id) ? 'bg-indigo-50/30' : ''}`}
+                            className={`hover:bg-slate-50/50 transition-all ${
+                              record.isAdditionalShift 
+                                ? 'bg-yellow-100/70 hover:bg-yellow-200/80 transition-colors' 
+                                : selectedRecordIds.includes(record.id) 
+                                  ? 'bg-indigo-50/30' 
+                                  : ''
+                            }`}
                           >
                             <td className="p-4">
                               <input 
@@ -4402,7 +4888,7 @@ function MainApp() {
                                 <div className="flex items-center gap-2">
                                   {record.date}
                                   {record.isExtraShift && (
-                                    <span className="px-1.5 py-0.5 bg-amber-100 text-amber-600 text-[8px] font-bold uppercase rounded-md border border-amber-200">
+                                    <span className="px-1.5 py-0.5 bg-amber-50 text-amber-600 text-[8px] font-bold uppercase rounded-md border border-amber-200">
                                       Extra
                                     </span>
                                   )}
@@ -4443,6 +4929,15 @@ function MainApp() {
                             </td>
                             <td className="p-4 text-xs font-mono text-slate-500">
                               {record.startTime} - {record.endTime === '00:00' ? '00:00 (Siguiente día)' : record.endTime}
+                            </td>
+                            <td className="p-4 text-center">
+                              <input 
+                                type="checkbox"
+                                checked={record.isAdditionalShift || false}
+                                onChange={() => toggleAdditionalShift(record.id)}
+                                className="w-4 h-4 rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                                title="Marcar como turno adicional"
+                              />
                             </td>
                             <td className="p-4 text-xs font-mono font-bold">
                               {(() => {
@@ -4618,134 +5113,107 @@ function MainApp() {
                   {(viewingArchive ? viewingArchive.records : records).length > 0 && (
                     <tfoot className="bg-slate-50 border-t-2 border-slate-200">
                       <tr>
-                        <td colSpan={3} className="p-4 text-right text-xs font-bold text-slate-500 uppercase tracking-widest align-middle">
-                          Totales Consulta:
+                        <td colSpan={3} className="p-4 text-xs font-bold text-slate-500 uppercase tracking-widest align-middle">
+                          Totales Informe Visual:
                         </td>
-                        <td colSpan={1} className="p-4 align-middle">
-                          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                        <td className="p-4 text-center align-middle bg-yellow-50 border-x border-yellow-100">
+                          <div className="flex flex-col items-center">
+                            <span className="text-[10px] font-bold text-yellow-600 uppercase leading-tight">Turnos<br/>Adic.</span>
+                            <span className="text-lg font-mono font-black text-yellow-700">{results.all.additionalShiftsCount}</span>
+                          </div>
+                        </td>
+                        <td className="p-4 align-middle bg-white">
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                             <div className="flex flex-col">
-                              <span className="text-[10px] font-bold text-slate-400 uppercase">Diurnas</span>
-                              <span className="text-base font-mono font-black text-amber-600">{results.all.hoursBreakdown.day.toFixed(1)}h</span>
+                              <span className="text-[8px] font-bold text-slate-400 uppercase">Diu</span>
+                              <span className="text-xs font-mono font-bold text-amber-600">{results.all.hoursBreakdown.day.toFixed(1)}h</span>
+                            </div>
+                            <div className="flex flex-col text-right">
+                              <span className="text-[8px] font-bold text-slate-400 uppercase">Noc</span>
+                              <span className="text-xs font-mono font-bold text-indigo-600">{results.all.hoursBreakdown.night.toFixed(1)}h</span>
                             </div>
                             <div className="flex flex-col">
-                              <span className="text-[10px] font-bold text-slate-400 uppercase">Nocturnas</span>
-                              <span className="text-base font-mono font-black text-indigo-600">{results.all.hoursBreakdown.night.toFixed(1)}h</span>
+                              <span className="text-[8px] font-bold text-slate-400 uppercase">FD</span>
+                              <span className="text-xs font-mono font-bold text-rose-600">{results.all.hoursBreakdown.holidayDay.toFixed(1)}h</span>
                             </div>
-                            <div className="flex flex-col">
-                              <span className="text-[10px] font-bold text-slate-400 uppercase">Fest. Diu.</span>
-                              <span className="text-base font-mono font-black text-rose-600">{results.all.hoursBreakdown.holidayDay.toFixed(1)}h</span>
+                            <div className="flex flex-col text-right">
+                              <span className="text-[8px] font-bold text-slate-400 uppercase">FN</span>
+                              <span className="text-xs font-mono font-bold text-purple-600">{results.all.hoursBreakdown.holidayNight.toFixed(1)}h</span>
                             </div>
-                            <div className="flex flex-col">
-                              <span className="text-[10px] font-bold text-slate-400 uppercase">Fest. Noc.</span>
-                              <span className="text-base font-mono font-black text-purple-600">{results.all.hoursBreakdown.holidayNight.toFixed(1)}h</span>
+                            <div className="col-span-2 mt-1 pt-1 border-t border-slate-100 flex justify-between">
+                              <span className="text-[8px] font-bold text-amber-700 uppercase">Ext:</span>
+                              <span className="text-[10px] font-mono font-black text-amber-700">{(results.all.hoursBreakdown.extraDay + results.all.hoursBreakdown.extraNight + results.all.hoursBreakdown.extraHolidayDay + results.all.hoursBreakdown.extraHolidayNight).toFixed(1)}h</span>
                             </div>
                           </div>
                         </td>
-                          <td className="p-4 text-right align-middle bg-slate-50">
+                        <td className="p-4 align-middle bg-slate-50">
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                             <div className="flex flex-col">
-                              <span className="text-[10px] font-bold text-slate-400 uppercase">Horas Extra</span>
-                              <span className="text-sm font-mono font-bold text-amber-700">
-                                {(results.all.hoursBreakdown.extraDay + results.all.hoursBreakdown.extraNight + results.all.hoursBreakdown.extraHolidayDay + results.all.hoursBreakdown.extraHolidayNight).toFixed(1)}h
-                              </span>
+                              <span className="text-[8px] font-bold text-slate-400 uppercase">Diu</span>
+                              <span className="text-xs font-mono font-bold text-amber-600">{results.all.avaBreakdown.day.toFixed(1)}h</span>
                             </div>
-                          </td>
-                          <td className="p-4 text-right align-middle bg-indigo-50">
+                            <div className="flex flex-col text-right">
+                              <span className="text-[8px] font-bold text-slate-400 uppercase">Noc</span>
+                              <span className="text-xs font-mono font-bold text-indigo-600">{results.all.avaBreakdown.night.toFixed(1)}h</span>
+                            </div>
                             <div className="flex flex-col">
-                              <span className="text-[10px] font-bold text-indigo-400 uppercase">Valor Parcial</span>
-                              <span className="text-base font-bold text-indigo-700">{formatCurrency(results.all.totalH)}</span>
+                              <span className="text-[8px] font-bold text-slate-400 uppercase">FD</span>
+                              <span className="text-xs font-mono font-bold text-rose-600">{results.all.avaBreakdown.holidayDay.toFixed(1)}h</span>
                             </div>
-                          </td>
-                          <td className="bg-slate-50 border-l border-slate-200"></td>
-                        </tr>
-                        <tr className="border-b border-slate-100">
-                          <td colSpan={3} className="p-4 text-right text-sm font-black text-slate-700 uppercase tracking-tight align-middle bg-slate-50">
-                            Totales AVA/Virtual:
-                          </td>
-                          <td colSpan={1} className="p-4 align-middle">
-                            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                              <div className="flex flex-col">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase">AVA D.</span>
-                                <span className="text-base font-mono font-black text-amber-600">{results.all.avaBreakdown.day.toFixed(1)}h</span>
-                              </div>
-                              <div className="flex flex-col">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase">AVA N.</span>
-                                <span className="text-base font-mono font-black text-indigo-600">{results.all.avaBreakdown.night.toFixed(1)}h</span>
-                              </div>
-                              <div className="flex flex-col">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase">AVA FD.</span>
-                                <span className="text-base font-mono font-black text-rose-600">{results.all.avaBreakdown.holidayDay.toFixed(1)}h</span>
-                              </div>
-                              <div className="flex flex-col">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase">AVA FN.</span>
-                                <span className="text-base font-mono font-black text-purple-600">{results.all.avaBreakdown.holidayNight.toFixed(1)}h</span>
-                              </div>
+                            <div className="flex flex-col text-right">
+                              <span className="text-[8px] font-bold text-slate-400 uppercase">FN</span>
+                              <span className="text-xs font-mono font-bold text-purple-600">{results.all.avaBreakdown.holidayNight.toFixed(1)}h</span>
                             </div>
-                          </td>
-                          <td className="p-4 text-right align-middle bg-slate-50">
+                            <div className="col-span-2 mt-1 pt-1 border-t border-slate-100 flex justify-between">
+                              <span className="text-[8px] font-bold text-violet-700 uppercase">Total:</span>
+                              <span className="text-[10px] font-mono font-black text-violet-700">{results.all.totalMonthlyAVA.toFixed(1)}h</span>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="p-4 align-middle bg-white">
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                             <div className="flex flex-col">
-                              <span className="text-[10px] font-bold text-slate-400 uppercase">Total AVA</span>
-                              <span className="text-sm font-mono font-bold text-violet-700">{results.all.totalMonthlyAVA.toFixed(1)}h</span>
+                              <span className="text-[8px] font-bold text-slate-400 uppercase">P.D</span>
+                              <span className="text-xs font-mono font-bold text-amber-600">{results.all.patientsBreakdown.day}</span>
                             </div>
-                          </td>
-                          <td className="p-4 text-right align-middle bg-violet-50">
+                            <div className="flex flex-col text-right">
+                              <span className="text-[8px] font-bold text-slate-400 uppercase">P.N</span>
+                              <span className="text-xs font-mono font-bold text-indigo-600">{results.all.patientsBreakdown.night}</span>
+                            </div>
                             <div className="flex flex-col">
-                              <span className="text-[10px] font-bold text-violet-400 uppercase">Valor Parcial</span>
-                              <span className="text-base font-bold text-violet-700">{formatCurrency(results.all.totalAVA)}</span>
+                              <span className="text-[8px] font-bold text-slate-400 uppercase">P.FD</span>
+                              <span className="text-xs font-mono font-bold text-rose-600">{results.all.patientsBreakdown.holidayDay}</span>
                             </div>
-                          </td>
-                          <td className="bg-slate-50 border-l border-slate-200"></td>
-                        </tr>
-                        <tr className="border-b border-slate-200">
-                          <td colSpan={3} className="p-4 text-right text-sm font-black text-slate-700 uppercase tracking-tight align-middle bg-slate-50">
-                            Totales Pacientes:
-                          </td>
-                          <td colSpan={1} className="p-4 align-middle">
-                            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                              <div className="flex flex-col">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase">P. Diu</span>
-                                <span className="text-base font-mono font-black text-amber-600">{results.all.patientsBreakdown.day}</span>
-                              </div>
-                              <div className="flex flex-col">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase">P. Noc</span>
-                                <span className="text-base font-mono font-black text-indigo-600">{results.all.patientsBreakdown.night}</span>
-                              </div>
-                              <div className="flex flex-col">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase">P. FD</span>
-                                <span className="text-base font-mono font-black text-rose-600">{results.all.patientsBreakdown.holidayDay}</span>
-                              </div>
-                              <div className="flex flex-col">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase">P. FN</span>
-                                <span className="text-base font-mono font-black text-purple-600">{results.all.patientsBreakdown.holidayNight}</span>
-                              </div>
+                            <div className="flex flex-col text-right">
+                              <span className="text-[8px] font-bold text-slate-400 uppercase">P.FN</span>
+                              <span className="text-xs font-mono font-bold text-purple-600">{results.all.patientsBreakdown.holidayNight}</span>
                             </div>
-                          </td>
-                          <td className="p-4 text-right align-middle bg-slate-50">
-                            <div className="flex flex-col">
-                              <span className="text-[10px] font-bold text-slate-400 uppercase">Total Pac.</span>
-                              <span className="text-sm font-mono font-bold text-emerald-700">{results.all.totalMonthlyPatients}</span>
+                            <div className="col-span-2 mt-1 pt-1 border-t border-slate-100 flex justify-between">
+                              <span className="text-[8px] font-bold text-emerald-700 uppercase">Sum:</span>
+                              <span className="text-[10px] font-mono font-black text-emerald-700">{results.all.totalMonthlyPatients}</span>
                             </div>
-                          </td>
-                          <td className="p-4 text-right align-middle bg-emerald-50">
-                            <div className="flex flex-col">
-                              <span className="text-[10px] font-bold text-emerald-400 uppercase">Valor Parcial</span>
-                              <span className="text-base font-bold text-emerald-700">{formatCurrency(results.all.totalP)}</span>
-                            </div>
-                          </td>
-                          <td className="bg-slate-50 border-l border-slate-200"></td>
-                        </tr>
-                        {/* Grand Total Footer Row */}
-                        <tr className="bg-indigo-600 text-white border-t-2 border-indigo-700 shadow-inner">
-                          <td colSpan={5} className="p-6 text-right text-xl font-black uppercase tracking-widest align-middle">
-                            Total Devengado Mensual (Bruto):
-                          </td>
-                          <td className="p-6 text-right align-middle">
-                            <span className="text-3xl font-mono font-black">
-                              {formatCurrency(results.all.gross)}
-                            </span>
-                          </td>
-                          <td className="bg-indigo-700/30"></td>
-                        </tr>
-                      </tfoot>
+                          </div>
+                        </td>
+                        <td className="p-4 text-right align-middle bg-slate-50">
+                          <div className="flex flex-col">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase">Subtotal</span>
+                            <span className="text-sm font-bold text-slate-700">{formatCurrency(results.all.gross)}</span>
+                          </div>
+                        </td>
+                        <td colSpan={2} className="bg-slate-100"></td>
+                      </tr>
+                      {/* Grand Total Footer Row */}
+                      <tr className="bg-slate-800 text-white border-t-2 border-slate-900 shadow-inner">
+                        <td colSpan={7} className="p-6 text-right text-xl font-black uppercase tracking-widest align-middle">
+                          Gran Total Bruto Proyectado:
+                        </td>
+                        <td colSpan={3} className="p-6 text-right align-middle bg-slate-900">
+                          <span className="text-3xl font-mono font-black text-emerald-400">
+                            {formatCurrency(results.all.gross)}
+                          </span>
+                        </td>
+                      </tr>
+                    </tfoot>
                     )}
                 </table>
               </div>
@@ -4792,13 +5260,21 @@ function MainApp() {
 
           {/* Step 3.5: Projections and Totals */}
           <section className="space-y-6">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-sm">3.5</div>
+            <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <h2 className="text-xl font-bold text-slate-800">Proyecciones y Totales (Acumulado)</h2>
-                <span className="px-3 py-1 bg-indigo-100 text-indigo-700 text-[10px] font-black uppercase tracking-widest rounded-full border border-indigo-200">
-                  Incluye Proyecciones
-                </span>
+                <div className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-sm">3.5</div>
+                <div className="flex items-center gap-3">
+                  <h2 className="text-xl font-bold text-slate-800">
+                    {viewingArchive ? 'Liquidación Archivada (Acumulado)' : 'Proyecciones y Totales (Acumulado)'}
+                  </h2>
+                  <span className={`px-3 py-1 ${viewingArchive ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-indigo-100 text-indigo-700 border-indigo-200'} text-[10px] font-black uppercase tracking-widest rounded-full border`}>
+                    {viewingArchive ? 'Documento Histórico' : 'Incluye Proyecciones'}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
+                <span className="text-[9px] font-black text-slate-400 uppercase">Tarifas Base:</span>
+                <span className="text-[10px] font-bold text-slate-600">C: {formatCurrency(rates.base.consultation)} | AVA: {formatCurrency(rates.base.ava)}</span>
               </div>
             </div>
             
@@ -4830,56 +5306,44 @@ function MainApp() {
                         initial={{ opacity: 0, height: 0 }}
                         animate={{ opacity: 1, height: 'auto' }}
                         exit={{ opacity: 0, height: 0 }}
-                        className="pt-4 space-y-4 border-t border-slate-200 mt-4 overflow-hidden"
+                        className="pt-4 space-y-2 border-t border-slate-200 mt-4 overflow-hidden"
                       >
-                        <div className="space-y-2">
-                          <div className="flex justify-between text-[10px]">
-                            <span className="text-slate-500">Base Consulta + Extras:</span>
-                            <span className="font-bold text-slate-800">{formatCurrency(results.all.grossBreakdown.consultationBase)}</span>
-                          </div>
-                          <div className="flex justify-between text-[10px]">
-                            <span className="text-violet-600 font-medium">AVA / Virtual:</span>
-                            <span className="font-bold text-violet-800">{formatCurrency(results.all.grossBreakdown.ava)}</span>
-                          </div>
-                          <div className="flex justify-between text-[10px]">
-                            <span className="text-emerald-600 font-medium">Servicio / Pacientes:</span>
-                            <span className="font-bold text-emerald-800">{formatCurrency(results.all.grossBreakdown.service)}</span>
-                          </div>
-                          <div className="flex justify-between text-[10px] pt-1 border-t border-slate-100">
-                            <span className="text-slate-400">Total Bruto Proyectado:</span>
-                            <span className="font-bold text-slate-900">{formatCurrency(results.all.gross)}</span>
-                          </div>
+                        <div className="flex justify-between text-[10px] pt-1">
+                          <span className="text-slate-500">Base Consulta + Extras:</span>
+                          <span className="font-bold text-slate-800">{formatCurrency(results.all.grossBreakdown.consultationBase)}</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 pl-4 text-[9px] text-slate-400">
+                          <div className="flex justify-between"><span>Diu:</span> <span>{results.all.hoursBreakdown.day.toFixed(1)}h</span></div>
+                          <div className="flex justify-between"><span>Noc:</span> <span>{results.all.hoursBreakdown.night.toFixed(1)}h</span></div>
+                          <div className="flex justify-between"><span>F.D:</span> <span>{results.all.hoursBreakdown.holidayDay.toFixed(1)}h</span></div>
+                          <div className="flex justify-between"><span>F.N:</span> <span>{results.all.hoursBreakdown.holidayNight.toFixed(1)}h</span></div>
+                          <div className="flex justify-between col-span-2"><span>Extras Totales:</span> <span>{(results.all.hoursBreakdown.extraDay+results.all.hoursBreakdown.extraNight+results.all.hoursBreakdown.extraHolidayDay+results.all.hoursBreakdown.extraHolidayNight).toFixed(1)}h</span></div>
                         </div>
 
-                        {/* Detailed Tipification Mini-Table */}
-                        <div className="bg-white p-3 rounded-xl border border-slate-100 space-y-2">
-                          <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Tipificación de Horas Proyectadas</p>
-                          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[9px] font-bold">
-                            <div className="flex justify-between border-b border-slate-50">
-                              <span className="text-slate-400">Consulta D:</span>
-                              <span className="text-amber-600">{results.all.hoursBreakdown.day.toFixed(1)}h</span>
-                            </div>
-                            <div className="flex justify-between border-b border-slate-50">
-                              <span className="text-slate-400">Consulta N:</span>
-                              <span className="text-indigo-600">{results.all.hoursBreakdown.night.toFixed(1)}h</span>
-                            </div>
-                            <div className="flex justify-between border-b border-slate-50">
-                              <span className="text-slate-400">AVA D:</span>
-                              <span className="text-amber-600">{results.all.avaBreakdown.day.toFixed(1)}h</span>
-                            </div>
-                            <div className="flex justify-between border-b border-slate-50">
-                              <span className="text-slate-400">AVA N:</span>
-                              <span className="text-indigo-600">{results.all.avaBreakdown.night.toFixed(1)}h</span>
-                            </div>
-                            <div className="flex justify-between border-b border-slate-50">
-                              <span className="text-slate-400">Pacientes D:</span>
-                              <span className="text-amber-600">{results.all.patientsBreakdown.day}</span>
-                            </div>
-                            <div className="flex justify-between border-b border-slate-50">
-                              <span className="text-slate-400">Pacientes N:</span>
-                              <span className="text-indigo-600">{results.all.patientsBreakdown.night}</span>
-                            </div>
-                          </div>
+                        <div className="flex justify-between text-[10px] pt-1 mt-1 border-t border-slate-50">
+                          <span className="text-violet-600 font-medium">AVA / Virtual:</span>
+                          <span className="font-bold text-violet-800">{formatCurrency(results.all.grossBreakdown.ava)}</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 pl-4 text-[9px] text-violet-400">
+                          <div className="flex justify-between"><span>Diu:</span> <span>{results.all.avaBreakdown.day.toFixed(1)}h</span></div>
+                          <div className="flex justify-between"><span>Noc:</span> <span>{results.all.avaBreakdown.night.toFixed(1)}h</span></div>
+                          <div className="flex justify-between"><span>F.D:</span> <span>{results.all.avaBreakdown.holidayDay.toFixed(1)}h</span></div>
+                          <div className="flex justify-between"><span>F.N:</span> <span>{results.all.avaBreakdown.holidayNight.toFixed(1)}h</span></div>
+                        </div>
+
+                        <div className="flex justify-between text-[10px] pt-1 mt-1 border-t border-slate-50">
+                          <span className="text-emerald-600 font-medium">Servicio / Pacientes:</span>
+                          <span className="font-bold text-emerald-800">{formatCurrency(results.all.grossBreakdown.service)}</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 pl-4 text-[9px] text-emerald-400">
+                          <div className="flex justify-between"><span>P.D:</span> <span>{results.all.patientsBreakdown.day}</span></div>
+                          <div className="flex justify-between"><span>P.N:</span> <span>{results.all.patientsBreakdown.night}</span></div>
+                          <div className="flex justify-between"><span>P.FD:</span> <span>{results.all.patientsBreakdown.holidayDay}</span></div>
+                          <div className="flex justify-between"><span>P.FN:</span> <span>{results.all.patientsBreakdown.holidayNight}</span></div>
+                        </div>
+                        <div className="flex justify-between text-[10px] pt-1 border-t border-slate-100">
+                          <span className="text-slate-400">Total Bruto:</span>
+                          <span className="font-bold text-slate-900">{formatCurrency(results.all.gross)}</span>
                         </div>
                       </motion.div>
                     )}
@@ -4935,8 +5399,23 @@ function MainApp() {
                               <span className="font-bold text-rose-700">{formatCurrency(results.all.taxBreakdown.fsp)}</span>
                             </div>
                           )}
-                          <div className="flex justify-between text-[10px]">
-                            <span className="text-slate-500 font-bold">Retención en la Fuente:</span>
+                          <div className="flex justify-between items-center text-[10px]">
+                            <div className="flex items-center gap-2">
+                              <span className="text-slate-500 font-bold">Retención en la Fuente:</span>
+                              <button 
+                                onClick={() => {
+                                  // Open config at the Retefuente section
+                                  handleEnableConfigEdit();
+                                  // We can't easily scroll to it but we can highlight it or something
+                                  // For now just open it
+                                  showToast("Ajusta la Retención en la Fuente en la Configuración.", 'info');
+                                }}
+                                className="p-1 hover:bg-rose-100 rounded text-rose-500 transition-colors"
+                                title="Modificar Retefuente"
+                              >
+                                <Edit3 className="w-3 h-3" />
+                              </button>
+                            </div>
                             <span className="font-bold text-rose-800">{formatCurrency(results.all.retefuente)}</span>
                           </div>
                           {results.all.taxBreakdown.additionalDeductions > 0 && (
@@ -5031,337 +5510,422 @@ function MainApp() {
             </div>
           </section>
 
-          {/* Step 4: Final Extract */}
-          <section className="space-y-6">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-slate-800 text-white flex items-center justify-center font-bold text-sm">4</div>
-              <h2 className="text-xl font-bold text-slate-800">Extracto Final de Pago</h2>
+          {/* Step 4: Final Extract (Liquidación Técnica) */}
+          <section className="space-y-6" id="final-extract-section">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-slate-900 text-white flex items-center justify-center font-black text-lg shadow-lg">4</div>
+                <div>
+                  <h2 className="text-2xl font-black text-slate-800 tracking-tight">Extracto Final de Pago</h2>
+                  <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">Liquidación Técnica Oficial</p>
+                </div>
+              </div>
+              
+              {!allRecordsAreDefinitive ? (
+                <div className="flex items-center gap-3 px-4 py-2 bg-amber-50 border border-amber-200 rounded-2xl animate-pulse">
+                  <AlertCircle className="w-5 h-5 text-amber-600" />
+                  <span className="text-[10px] font-black text-amber-700 uppercase">Sincroniza todos los turnos para generar el extracto</span>
+                  <button 
+                    onClick={toggleAllRecordsStatus}
+                    className="ml-2 px-3 py-1 bg-amber-600 text-white text-[10px] font-bold rounded-lg hover:bg-amber-700 transition-colors"
+                  >
+                    Marcar Todo
+                  </button>
+                </div>
+              ) : (
+                <div className={`flex items-center gap-2 px-4 py-2 rounded-2xl border ${extractVerified.isValid ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-rose-50 border-rose-200 text-rose-700'}`}>
+                  {extractVerified.isValid ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+                  <span className="text-[10px] font-black uppercase">
+                    {extractVerified.isValid ? 'Cálculos Verificados (100% Match)' : 'Discrepancia en Cálculos Detectada'}
+                  </span>
+                </div>
+              )}
             </div>
             
-            {(viewingArchive ? viewingArchive.records : records).length > 0 ? (
-              <div className="bg-white p-6 lg:p-10 rounded-3xl border border-slate-200 shadow-sm space-y-10">
-                {/* Summary Header */}
-                <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-3">
-                      <h3 className="text-2xl font-bold text-slate-800">
-                        {periods.find(p => p.id === selectedPeriodId)?.name || 'Extracto de Pago'}
-                      </h3>
-                      <span className="px-3 py-1 bg-emerald-100 text-emerald-700 text-[10px] font-black uppercase tracking-widest rounded-full border border-emerald-200">
-                        Solo Definitivos
-                      </span>
+            {allRecordsAreDefinitive ? (
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className={`bg-white rounded-[40px] border-2 shadow-2xl overflow-hidden ${extractVerified.isValid ? 'border-slate-800' : 'border-rose-500'}`}
+              >
+                {/* Header Section */}
+                <div className="bg-slate-900 p-8 text-white flex flex-col md:flex-row justify-between items-start md:items-center gap-8">
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-4">
+                      <div className="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center backdrop-blur-sm">
+                        <FileText className="w-8 h-8 text-indigo-400" />
+                      </div>
+                      <div>
+                        <h3 className="text-3xl font-black tracking-tight leading-none">
+                          {periods.find(p => p.id === selectedPeriodId)?.name || 'Extracto de Pago'}
+                        </h3>
+                        <p className="text-indigo-300 font-bold text-xs uppercase tracking-[0.2em] mt-1">Liquidación Consolidada</p>
+                      </div>
                     </div>
-                    <p className="text-slate-500 font-medium">Resumen detallado de ingresos y deducciones legales.</p>
+                    <div className="flex flex-wrap gap-4 pt-2">
+                      <div className="bg-white/5 border border-white/10 px-4 py-2 rounded-xl">
+                        <span className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Horas Registradas</span>
+                        <span className="text-lg font-mono font-bold">{results.all.totalAccumulatedHours.toFixed(1)}h</span>
+                      </div>
+                      <div className="bg-white/5 border border-white/10 px-4 py-2 rounded-xl">
+                        <span className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Pacientes Atendidos</span>
+                        <span className="text-lg font-mono font-bold">{results.all.totalMonthlyPatients}</span>
+                      </div>
+                      <div className="bg-white/5 border border-white/10 px-4 py-2 rounded-xl">
+                        <span className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Tarifa Hora Base</span>
+                        <span className="text-lg font-mono font-bold">{formatCurrency(rates.base.consultation)}</span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3">
+
+                  <div className="flex flex-col gap-3 w-full md:w-auto">
                     <button 
-                      onClick={exportToPDF}
-                      className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl hover:bg-indigo-100 transition-all"
-                      title="Exportar PDF"
+                      onClick={() => {
+                        setConfirmDialog({
+                          title: "¿Deseas generar el extracto del periodo?",
+                          message: "Esta acción organizará toda la información de la bitácora y la sección 3.5 en un documento oficial. Los valores serán idénticos a los ya conciliados.",
+                          confirmLabel: "Sí, Generar Extracto",
+                          onConfirm: () => {
+                            exportToPDF();
+                            showToast("Extracto generado correctamente", "success");
+                          }
+                        });
+                      }}
+                      className="w-full bg-indigo-500 hover:bg-indigo-400 text-white font-black py-4 px-8 rounded-2xl transition-all shadow-lg flex items-center justify-center gap-3 text-sm group"
                     >
-                      <FileDown className="w-5 h-5" />
+                      <FileDown className="w-5 h-5 group-hover:-translate-y-1 transition-transform" />
+                      PROCEDER A GENERAR PDF
                     </button>
-                    <button 
-                      onClick={() => window.print()}
-                      className="p-3 bg-slate-100 text-slate-600 rounded-2xl hover:bg-slate-200 transition-all"
-                      title="Imprimir Extracto"
-                    >
-                      <Printer className="w-5 h-5" />
-                    </button>
-                    <button 
-                      onClick={saveCurrentCalculation}
-                      className="px-6 py-3 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all flex items-center gap-2 shadow-lg shadow-indigo-200"
-                    >
-                      <Save className="w-5 h-5" />
-                      Guardar Extracto
-                    </button>
-                  </div>
-                </div>
-
-                {/* Main Totals Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                  <div className="bg-emerald-50 p-6 rounded-3xl border border-emerald-100 space-y-2">
-                    <div className="flex items-center gap-2 text-emerald-700">
-                      <TrendingUp className="w-4 h-4" />
-                      <span className="text-[10px] font-bold uppercase tracking-widest">Total Devengado (Mes)</span>
-                    </div>
-                    <p className="text-3xl font-bold text-emerald-800">{formatCurrency(results.definitive.gross)}</p>
-                    <div className="text-[10px] font-bold text-slate-500 uppercase pt-2 border-t border-emerald-100">
-                      <div className="flex justify-between"><span>Bruto Turnos:</span> <span>{formatCurrency(results.definitive.totalH + results.definitive.totalAVA)}</span></div>
-                      <div className="flex justify-between"><span>Servicio/Pac:</span> <span>{formatCurrency(results.definitive.totalP)}</span></div>
-                    </div>
-                  </div>
-                  
-                  <div className="bg-emerald-500 p-6 rounded-3xl text-white space-y-2 shadow-xl shadow-emerald-100">
-                    <div className="flex items-center gap-2 opacity-80">
-                      <CheckIcon className="w-4 h-4" />
-                      <span className="text-[10px] font-bold uppercase tracking-widest">Ganancia Total Real (Patrimonial)</span>
-                    </div>
-                    <p className="text-3xl font-bold">{formatCurrency(results.definitive.net)}</p>
-                    <div className="text-[10px] font-bold opacity-80 uppercase pt-2 border-t border-emerald-400">
-                      <div className="flex justify-between"><span>Prima:</span> <span>{formatCurrency(results.definitive.primaProporcional)}</span></div>
-                      <div className="flex justify-between"><span>Cesantías:</span> <span>{formatCurrency(results.definitive.cesantiasProporcional)}</span></div>
-                    </div>
-                  </div>
-
-                  <div className="bg-rose-50 p-6 rounded-3xl border border-rose-100 space-y-2">
-                    <div className="flex items-center gap-2 text-rose-700">
-                      <TrendingDown className="w-4 h-4" />
-                      <span className="text-[10px] font-bold uppercase tracking-widest">Total Deducciones</span>
-                    </div>
-                    <p className="text-3xl font-bold text-rose-800">{formatCurrency(results.definitive.totalDeductions)}</p>
-                    <div className="text-[10px] font-bold text-rose-500 uppercase pt-2 border-t border-rose-100">
-                      <div className="flex justify-between"><span>Salud/Pens:</span> <span>{formatCurrency(results.definitive.taxBreakdown.health + results.definitive.taxBreakdown.pension)}</span></div>
-                      <div className="flex justify-between"><span>Retefuente:</span> <span>{formatCurrency(results.definitive.retefuente)}</span></div>
-                    </div>
-                  </div>
-
-                  <div className="bg-indigo-600 p-6 rounded-3xl text-white space-y-2 shadow-xl shadow-indigo-100">
-                    <div className="flex items-center gap-2 opacity-80">
-                      <Wallet className="w-4 h-4" />
-                      <span className="text-[10px] font-bold uppercase tracking-widest">Neto a Recibir (Caja)</span>
-                    </div>
-                    <p className="text-3xl font-bold">{formatCurrency(results.definitive.netCash)}</p>
-                    <div className="text-[10px] font-bold opacity-80 uppercase pt-2 border-t border-indigo-400">
-                      <div className="flex justify-between"><span>Afectación IBC:</span> <span>{formatCurrency(results.definitive.ibc)}</span></div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Detailed Breakdown Table (Tipificación) */}
-                <div className="p-6 bg-slate-50 rounded-3xl border border-slate-200 space-y-4">
-                  <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] flex items-center gap-2">
-                    <div className="w-4 h-1 bg-indigo-600" />
-                    Tipificación de Horas y Pacientes (Definitivos)
-                  </h4>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-[10px] uppercase font-bold text-slate-600">
-                      <thead>
-                        <tr className="border-b border-slate-200">
-                          <th className="p-2 text-left">Categoría</th>
-                          <th className="p-2 text-center text-amber-600">Diurnas</th>
-                          <th className="p-2 text-center text-indigo-600">Nocturnas</th>
-                          <th className="p-2 text-center text-rose-600">D. Festival</th>
-                          <th className="p-2 text-center text-purple-600">N. Festival</th>
-                          <th className="p-2 text-right">Valor Parcial</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        <tr>
-                          <td className="p-2 font-black text-slate-800">Horas Consulta (Bitácora)</td>
-                          <td className="p-2 text-center font-mono">{results.definitive.hoursBreakdown.day.toFixed(1)}h</td>
-                          <td className="p-2 text-center font-mono">{results.definitive.hoursBreakdown.night.toFixed(1)}h</td>
-                          <td className="p-2 text-center font-mono">{results.definitive.hoursBreakdown.holidayDay.toFixed(1)}h</td>
-                          <td className="p-2 text-center font-mono">{results.definitive.hoursBreakdown.holidayNight.toFixed(1)}h</td>
-                          <td className="p-2 text-right font-mono text-indigo-600">{formatCurrency(results.definitive.totalH)}</td>
-                        </tr>
-                        <tr>
-                          <td className="p-2 font-black text-slate-800">Horas AVA / Virtual</td>
-                          <td className="p-2 text-center font-mono">{results.definitive.avaBreakdown.day.toFixed(1)}h</td>
-                          <td className="p-2 text-center font-mono">{results.definitive.avaBreakdown.night.toFixed(1)}h</td>
-                          <td className="p-2 text-center font-mono">{results.definitive.avaBreakdown.holidayDay.toFixed(1)}h</td>
-                          <td className="p-2 text-center font-mono">{results.definitive.avaBreakdown.holidayNight.toFixed(1)}h</td>
-                          <td className="p-2 text-right font-mono text-violet-600">{formatCurrency(results.definitive.totalAVA)}</td>
-                        </tr>
-                        <tr>
-                          <td className="p-2 font-black text-slate-800">Pacientes Atendidos</td>
-                          <td className="p-2 text-center font-mono">{results.definitive.patientsBreakdown.day}</td>
-                          <td className="p-2 text-center font-mono">{results.definitive.patientsBreakdown.night}</td>
-                          <td className="p-2 text-center font-mono">{results.definitive.patientsBreakdown.holidayDay}</td>
-                          <td className="p-2 text-center font-mono">{results.definitive.patientsBreakdown.holidayNight}</td>
-                          <td className="p-2 text-right font-mono text-emerald-600">{formatCurrency(results.definitive.totalP)}</td>
-                        </tr>
-                      </tbody>
-                      <tfoot>
-                        <tr className="bg-slate-200/50">
-                          <td className="p-2 font-black">TOTALES BRUTOS</td>
-                          <td colSpan={4}></td>
-                          <td className="p-2 text-right font-mono font-black text-slate-900">{formatCurrency(results.definitive.gross)}</td>
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-                </div>
-
-                {/* Linear Detailed Breakdown (Excel Style) */}
-                <div className="space-y-4">
-                  <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200">
-                    <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
-                      <div className="w-4 h-1 bg-indigo-600" />
-                      Desglose Detallado de Ingresos (Prestaciones Sociales)
-                    </h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-sm font-medium text-slate-700">
-                      <div className="flex justify-between border-b border-slate-200 py-1">
-                        <span className="text-slate-500">Prima Proporcional Mensual:</span>
-                        <span className="font-mono text-indigo-600 font-bold">{formatCurrency(results.definitive.primaProporcional)}</span>
-                      </div>
-                      <div className="flex justify-between border-b border-slate-200 py-1">
-                        <span className="text-slate-500">Cesantías Proporcionales Mensuales:</span>
-                        <span className="font-mono text-indigo-600 font-bold">{formatCurrency(results.definitive.cesantiasProporcional)}</span>
-                      </div>
-                      <div className="flex justify-between border-b border-slate-200 py-1">
-                        <span className="text-slate-500">Intereses sobre Cesantías (1% mensual):</span>
-                        <span className="font-mono text-indigo-600 font-bold">{formatCurrency(results.definitive.interesesCesantias)}</span>
-                      </div>
-                      <div className="flex justify-between border-b border-slate-200 py-1">
-                        <span className="text-slate-500">Vacaciones Proporcionales Mensuales:</span>
-                        <span className="font-mono text-indigo-600 font-bold">{formatCurrency(results.definitive.vacacionesProporcional)}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200">
-                    <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
-                      <div className="w-4 h-1 bg-rose-600" />
-                      Desglose Detallado de Deducciones
-                    </h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-sm font-medium text-slate-700">
-                      <div className="flex justify-between border-b border-slate-200 py-1">
-                        <span className="text-slate-500">Aporte a Salud (4% de IBC):</span>
-                        <span className="font-mono text-rose-600 font-bold">-{formatCurrency(results.definitive.taxBreakdown.health)}</span>
-                      </div>
-                      <div className="flex justify-between border-b border-slate-200 py-1">
-                        <span className="text-slate-500">Aporte a Pensión (4% de IBC):</span>
-                        <span className="font-mono text-rose-600 font-bold">-{formatCurrency(results.definitive.taxBreakdown.pension)}</span>
-                      </div>
-                      <div className="flex justify-between border-b border-slate-200 py-1">
-                        <span className="text-slate-500">Fondo Solidaridad Pensional (FSP):</span>
-                        <span className="font-mono text-rose-600 font-bold">-{formatCurrency(results.definitive.taxBreakdown.fsp)}</span>
-                      </div>
-                      <div className="flex justify-between border-b border-slate-200 py-1">
-                        <span className="text-slate-500">Retención en la Fuente:</span>
-                        <span className="font-mono text-rose-600 font-bold">-{formatCurrency(results.definitive.retefuente)}</span>
-                      </div>
-                      {results.definitive.taxBreakdown.additionalDeductions > 0 && (
-                        <div className="flex justify-between border-b border-slate-200 py-1">
-                          <span className="text-slate-500">Otras Deducciones (Manuales):</span>
-                          <span className="font-mono text-rose-600 font-bold">-{formatCurrency(results.definitive.taxBreakdown.additionalDeductions)}</span>
-                        </div>
+                    <div className="flex gap-2">
+                       <button 
+                        onClick={() => exportToPDF()}
+                        className="flex-1 bg-white/10 hover:bg-white/20 text-white font-bold py-3 px-4 rounded-xl transition-all flex items-center justify-center gap-2 text-xs"
+                      >
+                        <Printer className="w-4 h-4" />
+                        Imprimir / PDF
+                      </button>
+                      <button 
+                        onClick={saveCurrentCalculation}
+                        className="flex-1 bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/30 font-bold py-3 px-4 rounded-xl transition-all flex items-center justify-center gap-2 text-xs"
+                      >
+                        <Save className="w-4 h-4" />
+                        Guardar Snapshot
+                      </button>
+                      {activePeriod && selectedPeriodId === activePeriod.id && (
+                        <button 
+                          onClick={() => {
+                            if (window.confirm("¿Estás seguro de cerrar este periodo? Se guardarán todos los valores actuales en el historial y se dejará de sincronizar.")) {
+                              archiveActivePeriod();
+                            }
+                          }}
+                          className="flex-1 bg-indigo-600 text-white font-bold py-3 px-4 rounded-xl hover:bg-indigo-700 transition-all flex items-center justify-center gap-2 text-xs shadow-lg"
+                        >
+                          <Archive className="w-4 h-4" />
+                          Finalizar y Archivar
+                        </button>
                       )}
                     </div>
                   </div>
                 </div>
-              </div>
+
+                {/* Extract Body (Mirrors Section 3.5) */}
+                <div className="p-8 lg:p-12 space-y-10">
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    
+                    {/* Column 1: Income Breakdown */}
+                    <div className="space-y-6">
+                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] flex items-center gap-2">
+                        <div className="w-6 h-0.5 bg-emerald-500" />
+                        Discriminación de Ingresos
+                      </h4>
+                      <div className="space-y-4">
+                        <div className="p-6 bg-slate-50 rounded-[32px] border border-slate-100 space-y-5">
+                          <div className="flex justify-between items-end">
+                            <div>
+                               <span className="block text-[10px] font-black text-slate-400 uppercase mb-1">Total Bruto</span>
+                               <span className="text-3xl font-black text-slate-800">{formatCurrency(results.all.gross)}</span>
+                            </div>
+                            <div className="text-right">
+                               <span className="block text-[8px] font-bold text-slate-400 uppercase">Productividad</span>
+                               <span className="text-lg font-bold text-emerald-600">{results.all.totalMonthlyPatients} Pac</span>
+                            </div>
+                          </div>
+                          
+                          <div className="space-y-3 pt-4 border-t border-slate-200">
+                             <div className="space-y-1">
+                                <div className="flex justify-between text-[11px] font-black text-slate-600 uppercase">
+                                   <span>Consulta y Horas Libres</span>
+                                   <span className="font-mono">{formatCurrency(results.all.grossBreakdown.consultationBase)}</span>
+                                </div>
+                                <div className="grid grid-cols-3 gap-1 text-[9px] text-slate-500 font-mono">
+                                   <span>DIU: {results.all.hoursBreakdown.day.toFixed(1)}h</span>
+                                   <span className="text-center">NOC: {results.all.hoursBreakdown.night.toFixed(1)}h</span>
+                                   <span className="text-right">FES: {(results.all.hoursBreakdown.holidayDay + results.all.hoursBreakdown.holidayNight).toFixed(1)}h</span>
+                                </div>
+                             </div>
+
+                             <div className="space-y-1 pt-2 border-t border-slate-100">
+                                <div className="flex justify-between text-[11px] font-black text-indigo-600 uppercase">
+                                   <span>AVA y Virtuales</span>
+                                   <span className="font-mono">{formatCurrency(results.all.grossBreakdown.ava)}</span>
+                                </div>
+                                <div className="grid grid-cols-3 gap-1 text-[9px] text-indigo-400 font-mono">
+                                   <span>DIU: {results.all.avaBreakdown.day.toFixed(1)}h</span>
+                                   <span className="text-center">NOC: {results.all.avaBreakdown.night.toFixed(1)}h</span>
+                                   <span className="text-right">FES: {(results.all.avaBreakdown.holidayDay + results.all.avaBreakdown.holidayNight).toFixed(1)}h</span>
+                                </div>
+                             </div>
+
+                             <div className="flex justify-between text-[11px] font-black text-emerald-600 pt-2 border-t border-slate-100">
+                                <span>TOTAL PACIENTES</span>
+                                <span className="font-mono">{formatCurrency(results.all.grossBreakdown.service)}</span>
+                             </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Column 2: Deductions */}
+                    <div className="space-y-6">
+                       <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] flex items-center gap-2">
+                        <div className="w-6 h-0.5 bg-rose-500" />
+                        Deducciones Aplicadas
+                      </h4>
+                      <div className="p-6 bg-rose-50 rounded-[32px] border border-rose-100 space-y-5">
+                        <div className="flex justify-between items-end">
+                            <div>
+                               <span className="block text-[10px] font-black text-rose-400 uppercase mb-1">Total Descuentos</span>
+                               <span className="text-3xl font-black text-rose-800">-{formatCurrency(results.all.totalDeductions)}</span>
+                            </div>
+                            <div className="text-right">
+                               <span className="block text-[8px] font-bold text-rose-400 uppercase text-center bg-rose-100 px-2 py-0.5 rounded shadow-sm">IBC: {formatCurrency(results.all.ibc)}</span>
+                            </div>
+                        </div>
+
+                        <div className="space-y-3 pt-4 border-t border-rose-200">
+                           <div className="flex justify-between text-[11px] font-bold text-rose-700">
+                              <span className="uppercase">Salud (4% IBC)</span>
+                              <span className="font-mono">-{formatCurrency(results.all.taxBreakdown.health)}</span>
+                           </div>
+                           <div className="flex justify-between text-[11px] font-bold text-rose-700">
+                              <span className="uppercase">Pensión (4% IBC)</span>
+                              <span className="font-mono">-{formatCurrency(results.all.taxBreakdown.pension)}</span>
+                           </div>
+                           <div className="flex justify-between text-[11px] font-black text-rose-900 pt-1 border-t border-rose-200/50">
+                              <span className="uppercase tracking-tight">Retención en la Fuente</span>
+                              <span className="font-mono">-{formatCurrency(results.all.retefuente)}</span>
+                           </div>
+                           {results.all.taxBreakdown.fsp > 0 && (
+                             <div className="flex justify-between text-[11px] font-bold text-rose-700 italic">
+                                <span>Fondo Solidaridad Pensional</span>
+                                <span className="font-mono">-{formatCurrency(results.all.taxBreakdown.fsp)}</span>
+                             </div>
+                           )}
+                           {results.all.taxBreakdown.additionalDeductions > 0 && (
+                             <div className="flex justify-between text-[11px] font-bold text-rose-700">
+                                <span>Otras Deducciones</span>
+                                <span className="font-mono">-{formatCurrency(results.all.taxBreakdown.additionalDeductions)}</span>
+                             </div>
+                           )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Column 3: Social Benefits and Net */}
+                    <div className="space-y-6">
+                       <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] flex items-center gap-2">
+                        <div className="w-6 h-0.5 bg-indigo-500" />
+                        Prestaciones y Neto
+                      </h4>
+                      <div className="space-y-4">
+                        <div className="p-6 bg-indigo-50 rounded-[32px] border border-indigo-100 space-y-4">
+                           <div className="space-y-1">
+                              <span className="block text-[10px] font-black text-indigo-400 uppercase tracking-widest">Saldo Patrimonial Acumulado</span>
+                              <span className="text-2xl font-black text-indigo-900">
+                                {formatCurrency(results.all.primaProporcional + results.all.cesantiasProporcional + results.all.vacacionesProporcional)}
+                              </span>
+                           </div>
+                           <div className="space-y-2 pt-3 border-t border-indigo-200">
+                              <div className="flex justify-between text-[11px] text-slate-700">
+                                 <span>Prima (Semestre {new Date().getMonth() < 6 ? '1' : '2'}):</span>
+                                 <span className="font-bold text-indigo-700">{formatCurrency(results.all.primaProporcional)}</span>
+                              </div>
+                              <div className="flex justify-between text-[11px] text-slate-700">
+                                 <span>Horas Promedio Vacaciones:</span>
+                                 <span className="font-bold text-indigo-700">{formatCurrency(results.all.vacacionesProporcional)}</span>
+                              </div>
+                              <div className="flex justify-between text-[11px] text-slate-700">
+                                 <span>Cesantías e Intereses:</span>
+                                 <span className="font-bold text-indigo-700">{formatCurrency(results.all.cesantiasProporcional + results.all.interesesCesantias)}</span>
+                              </div>
+                           </div>
+                        </div>
+
+                        <div className="p-6 bg-slate-900 rounded-[32px] shadow-2xl relative overflow-hidden group">
+                           <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/20 to-transparent opacity-50 transition-opacity group-hover:opacity-100" />
+                           <div className="relative z-10 text-center space-y-1">
+                              <span className="text-[10px] font-black text-indigo-300 uppercase tracking-[0.4em]">NETO A RECIBIR</span>
+                              <p className="text-4xl font-black text-white tabular-nums tracking-tighter">
+                                {formatCurrency(results.all.netCash)}
+                              </p>
+                              <div className="inline-flex items-center gap-2 mt-2 px-3 py-1 bg-emerald-500/20 text-emerald-400 rounded-full text-[10px] font-black border border-emerald-500/30">
+                                 <Check className="w-3 h-3" />
+                                 VALOR CONCILIADO CON SECCIÓN 3.5
+                              </div>
+                           </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Legal Footer */}
+                  <div className="pt-10 border-t border-slate-100 flex flex-col md:flex-row items-center justify-between gap-6">
+                    <p className="text-[9px] text-slate-400 font-medium max-w-lg leading-relaxed">
+                      Este documento certifica la liquidación técnica de honorarios. Los valores coinciden exactamente con la bitácora de turnos del sistema y la sección de resultados consolidados (3.5). Nota: La Retención en la Fuente y deducciones de ley han sido validadas según la configuración vigente.
+                    </p>
+                    <div className="flex items-center gap-4 grayscale opacity-40 hover:grayscale-0 hover:opacity-100 transition-all">
+                       <Calculator className="w-6 h-6 text-slate-900" />
+                       <div className="h-8 w-px bg-slate-200" />
+                       <ShieldCheck className="w-6 h-6 text-slate-900" />
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
             ) : (
-              <div className="bg-white p-20 rounded-[40px] border border-slate-200 border-dashed text-center space-y-4">
-                <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto text-slate-300">
-                  <Calculator className="w-10 h-10" />
+              <div className="bg-slate-50 border-2 border-dashed border-slate-200 rounded-[40px] py-32 flex flex-col items-center justify-center text-center space-y-6 shadow-inner">
+                <div className="w-24 h-24 bg-white rounded-[32px] shadow-xl border border-slate-100 flex items-center justify-center relative group">
+                   <Lock className="w-10 h-10 text-slate-200 group-hover:text-indigo-400 transition-colors" />
+                   <div className="absolute inset-0 bg-indigo-50 animate-pulse rounded-[32px] opacity-0 group-hover:opacity-100 transition-opacity" />
                 </div>
-                <div className="space-y-1">
-                  <h3 className="text-xl font-bold text-slate-800">Esperando Datos</h3>
-                  <p className="text-slate-500 max-w-xs mx-auto">Agrega turnos a la bitácora para generar el extracto final de pago.</p>
+                <div className="max-w-md space-y-2 px-8">
+                  <h3 className="text-2xl font-black text-slate-800 tracking-tight">Extracto No Disponible</h3>
+                  <p className="text-sm text-slate-500 leading-relaxed font-medium italic">
+                    "El extracto técnico garantiza que los cálculos son definitivos e inmutables. Para generarlo, primero debes validar todos los registros en tu bitácora de turnos."
+                  </p>
                 </div>
+                <button 
+                  onClick={toggleAllRecordsStatus}
+                  className="bg-indigo-600 hover:bg-slate-900 text-white px-10 py-5 rounded-[24px] font-black text-sm transition-all shadow-2xl shadow-indigo-200 flex items-center gap-3 transform hover:scale-105 active:scale-95"
+                >
+                  <CheckCircle2 className="w-5 h-5" />
+                  CONFIRMAR TODO Y DESBLOQUEAR
+                </button>
               </div>
             )}
           </section>
 
-          {/* Step 5: Accumulated Totals */}
+          {/* Section 5: Accumulated Potals and Benefits */}
           <section className="space-y-6">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-sm">5</div>
-                <h2 className="text-xl font-bold text-slate-800">Totales Acumulados (Todos los Periodos)</h2>
+                <h2 className="text-xl font-bold text-slate-800 tracking-tight">Prestaciones Sociales y Acumulados</h2>
               </div>
-              <button 
-                onClick={() => setShowAccumulatedDetails(!showAccumulatedDetails)}
-                className="px-4 py-2 bg-white border border-indigo-200 text-indigo-600 text-xs font-bold rounded-xl hover:bg-indigo-50 transition-all flex items-center gap-2"
-              >
-                {showAccumulatedDetails ? 'Ocultar Desglose' : 'Ver Desglose por Periodo'}
-                <ChevronDown className={`w-4 h-4 transition-transform ${showAccumulatedDetails ? 'rotate-180' : ''}`} />
-              </button>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={openHistoricalModal}
+                  className="px-4 py-2 bg-emerald-50 border border-emerald-200 text-emerald-600 text-xs font-black uppercase tracking-widest rounded-xl hover:bg-emerald-100 transition-all flex items-center gap-2"
+                >
+                  <PlusCircle className="w-3.5 h-3.5" />
+                  Registro Histórico Manual
+                </button>
+                <button 
+                  onClick={() => setShowAccumulatedDetails(!showAccumulatedDetails)}
+                  className="px-4 py-2 bg-white border border-indigo-200 text-indigo-600 text-xs font-bold rounded-xl hover:bg-indigo-50 transition-all flex items-center gap-2"
+                >
+                  {showAccumulatedDetails ? 'Ocultar Desglose' : 'Ver Matriz de Periodos'}
+                  <ChevronDown className={`w-4 h-4 transition-transform ${showAccumulatedDetails ? 'rotate-180' : ''}`} />
+                </button>
+              </div>
             </div>
 
             <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm space-y-8">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 {(() => {
-                  const accumulated = periodsWithLiveTotals.reduce((acc, p) => {
+                  const accumulated = periods.reduce((acc, p) => {
+                    const isCurrent = p.id === selectedPeriodId;
+                    const pGross = isCurrent ? results.all.gross : (p.totalGross || 0);
+                    const pTotalGross = isCurrent ? results.all.totalPatrimonial : (p.totalGrossWithBenefits || 0);
+                    const pDeductions = isCurrent ? results.all.totalDeductions : (p.totalDeductions || 0);
+                    const pNet = isCurrent ? results.all.net : (p.net || 0);
+                    const pPrima = isCurrent ? results.all.primaProporcional : (p.primaProporcional || 0);
+                    const pCesantias = isCurrent ? results.all.cesantiasProporcional : (p.cesantiasProporcional || 0);
+                    const pIntereses = isCurrent ? results.all.interesesCesantias : (p.interesesCesantias || 0);
+                    const pVacaciones = isCurrent ? results.all.vacacionesProporcional : (p.vacacionesProporcional || 0);
+
                     return {
-                      gross: acc.gross + p.liveGross,
-                      totalGross: acc.totalGross + p.livePatrimonial,
-                      deductions: acc.deductions + p.liveDeductions,
-                      net: acc.net + p.liveNet,
-                      prima: acc.prima + (p.liveGross / 12), // Estimate based on live gross logic
-                      cesantias: acc.cesantias + (p.liveGross / 12),
-                      intereses: acc.intereses + (p.liveGross / 12 * 0.12),
-                      vacaciones: acc.vacaciones + (p.liveGross / 24)
+                      gross: acc.gross + pGross,
+                      totalGross: acc.totalGross + pTotalGross,
+                      deductions: acc.deductions + pDeductions,
+                      net: acc.net + pNet,
+                      prima: acc.prima + pPrima,
+                      cesantias: acc.cesantias + pCesantias,
+                      intereses: acc.intereses + pIntereses,
+                      vacaciones: acc.vacaciones + pVacaciones
                     };
                   }, { gross: 0, totalGross: 0, deductions: 0, net: 0, prima: 0, cesantias: 0, intereses: 0, vacaciones: 0 });
 
                   return (
-                    <div className="space-y-6">
-                      <div className="space-y-4">
-                        <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200">
+                    <div className="space-y-6 w-full col-span-full">
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div className="p-6 bg-slate-50 rounded-[32px] border border-slate-200">
                           <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
                             <div className="w-4 h-1 bg-indigo-600" />
-                            Totales Generales Acumulados
+                            Balance General Acumulado
                           </h4>
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm font-medium">
-                            <div className="flex justify-between border-b border-slate-100 py-2">
-                              <span className="text-slate-500">Ingreso Salarial Bruto:</span>
-                              <span className="font-mono text-slate-800 font-bold">{formatCurrency(accumulated.gross)}</span>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+                            <div className="flex flex-col">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase">Ingreso Bruto Total</span>
+                              <span className="text-xl font-mono text-slate-800 font-bold">{formatCurrency(accumulated.gross)}</span>
                             </div>
-                            <div className="flex justify-between border-b border-slate-100 py-2">
-                              <span className="text-emerald-500 font-medium tracking-tight">Total Patrimonial (+Prestaciones):</span>
-                              <span className="font-mono text-emerald-700 font-bold">{formatCurrency(accumulated.totalGross)}</span>
+                            <div className="flex flex-col">
+                              <span className="text-[10px] font-bold text-emerald-500 uppercase">Patrimonio Total (+Prest)</span>
+                              <span className="text-xl font-mono text-emerald-700 font-bold">{formatCurrency(accumulated.totalGross)}</span>
                             </div>
-                            <div className="flex justify-between border-b border-slate-100 py-2">
-                              <span className="text-rose-500">Total Deducciones:</span>
-                              <span className="font-mono text-rose-700 font-bold">-{formatCurrency(accumulated.deductions)}</span>
+                            <div className="flex flex-col">
+                              <span className="text-[10px] font-bold text-rose-500 uppercase">Retenciones Totales</span>
+                              <span className="text-xl font-mono text-rose-700 font-bold">-{formatCurrency(accumulated.deductions)}</span>
                             </div>
-                            <div className="flex justify-between border-b border-slate-100 py-2 px-3 bg-indigo-50 rounded-lg">
-                              <span className="text-indigo-600 font-bold">NETO TOTAL REAL:</span>
-                              <span className="font-mono text-indigo-700 font-black">{formatCurrency(accumulated.net)}</span>
+                            <div className="flex flex-col p-3 bg-indigo-600 rounded-2xl text-white shadow-lg">
+                              <span className="text-[10px] font-black uppercase opacity-80">Saldo Neto Real</span>
+                              <span className="text-xl font-mono font-black">{formatCurrency(accumulated.net)}</span>
                             </div>
                           </div>
                         </div>
 
-                        <div className="p-4 bg-white rounded-2xl border border-slate-100">
-                          <div className="flex items-center justify-between mb-4">
+                        <div className="p-6 bg-white rounded-[32px] border border-slate-100 shadow-sm">
+                          <div className="flex items-center justify-between mb-6">
                             <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
                               <div className="w-4 h-1 bg-emerald-500" />
-                              Desglose de Prestaciones Sociales Acumuladas
+                              Acumulado de Prestaciones Sociales
                             </h4>
-                            <button 
-                              onClick={() => setShowAccumulatedComponents(!showAccumulatedComponents)}
-                              className="text-[9px] font-extrabold text-indigo-600 uppercase hover:underline decoration-2 underline-offset-4"
-                            >
-                              {showAccumulatedComponents ? 'Ocultar Detalle' : 'Ver Detalle Completo Excel'}
-                            </button>
                           </div>
                           
-                          <AnimatePresence>
-                            {showAccumulatedComponents && (
-                              <motion.div 
-                                initial={{ opacity: 0, height: 0 }}
-                                animate={{ opacity: 1, height: 'auto' }}
-                                exit={{ opacity: 0, height: 0 }}
-                                className="overflow-hidden"
-                              >
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-12 gap-y-2 text-[11px] font-medium text-slate-600 uppercase">
-                                  <div className="flex justify-between border-b border-slate-100 py-1">
-                                    <span>Total Prima:</span>
-                                    <span className="font-mono font-bold text-emerald-600">{formatCurrency(accumulated.prima)}</span>
-                                  </div>
-                                  <div className="flex justify-between border-b border-slate-100 py-1">
-                                    <span>Total Cesantías:</span>
-                                    <span className="font-mono font-bold text-emerald-600">{formatCurrency(accumulated.cesantias)}</span>
-                                  </div>
-                                  <div className="flex justify-between border-b border-slate-100 py-1">
-                                    <span>Total Int. Cesantías:</span>
-                                    <span className="font-mono font-bold text-emerald-600">{formatCurrency(accumulated.intereses)}</span>
-                                  </div>
-                                  <div className="flex justify-between border-b border-slate-100 py-1">
-                                    <span>Total Vacaciones:</span>
-                                    <span className="font-mono font-bold text-emerald-600">{formatCurrency(accumulated.vacaciones)}</span>
-                                  </div>
-                                  <div className="flex justify-between border-b border-slate-100 py-1">
-                                    <span className="text-rose-500">Total Deducciones Legales:</span>
-                                    <span className="font-mono font-bold text-rose-600">-{formatCurrency(accumulated.deductions)}</span>
-                                  </div>
-                                </div>
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
+                          <div className="grid grid-cols-2 gap-6">
+                            <div className="space-y-4">
+                              <div className="flex flex-col border-l-2 border-emerald-500 pl-4 py-1">
+                                <span className="text-[9px] font-black text-slate-400 uppercase">Prima de Servicios</span>
+                                <span className="text-lg font-mono font-bold text-emerald-600">{formatCurrency(accumulated.prima)}</span>
+                                <span className="text-[8px] text-slate-400 italic">Vencimiento: Jun / Dic</span>
+                              </div>
+                              <div className="flex flex-col border-l-2 border-amber-500 pl-4 py-1">
+                                <span className="text-[9px] font-black text-slate-400 uppercase">Cesantías</span>
+                                <span className="text-lg font-mono font-bold text-amber-600">{formatCurrency(accumulated.cesantias)}</span>
+                              </div>
+                            </div>
+                            <div className="space-y-4">
+                              <div className="flex flex-col border-l-2 border-violet-500 pl-4 py-1">
+                                <span className="text-[9px] font-black text-slate-400 uppercase">Vacaciones</span>
+                                <span className="text-lg font-mono font-bold text-violet-600">{formatCurrency(accumulated.vacaciones)}</span>
+                                <span className="text-[8px] text-slate-400 italic">Promedio 12 meses</span>
+                              </div>
+                              <div className="flex flex-col border-l-2 border-rose-500 pl-4 py-1">
+                                <span className="text-[9px] font-black text-slate-400 uppercase">Intereses Cesantías</span>
+                                <span className="text-lg font-mono font-bold text-rose-600">{formatCurrency(accumulated.intereses)}</span>
+                                <span className="text-[8px] text-slate-400 italic">12% sobre cesantías</span>
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       </div>
 
@@ -5371,54 +5935,131 @@ function MainApp() {
                             initial={{ opacity: 0, height: 0 }}
                             animate={{ opacity: 1, height: 'auto' }}
                             exit={{ opacity: 0, height: 0 }}
-                            className="bg-white rounded-2xl border border-slate-200 overflow-hidden"
+                            className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-inner"
                           >
-                            <div className="p-4 bg-slate-50 border-b border-slate-200">
-                              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
-                                <div className="w-4 h-1 bg-indigo-600" />
-                                Desglose por Periodos (Histórico Excel)
+                            <div className="p-4 bg-slate-900 border-b border-slate-800 flex justify-between items-center">
+                              <h4 className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                                <div className="w-4 h-1 bg-indigo-500" />
+                                Historial de Periodos y Liquidaciones Técnicas
                               </h4>
+                              <div className="flex items-center gap-4 text-[9px] font-bold text-slate-400 uppercase italic">
+                                <span>* Todos los valores consolidados</span>
+                                <div className="flex items-center gap-2 bg-white/5 px-3 py-1 rounded-lg border border-white/10">
+                                  <span className="text-emerald-400">Archivado</span>
+                                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                </div>
+                              </div>
                             </div>
                             <div className="overflow-x-auto">
                               <table className="w-full text-left border-collapse">
                                 <thead>
-                                  <tr className="bg-slate-50 border-b border-slate-200">
-                                    <th className="p-3 text-[9px] font-bold text-slate-500 uppercase tracking-wider">Mes / Periodo</th>
-                                    <th className="p-3 text-[9px] font-bold text-slate-500 uppercase tracking-wider text-right">Salario Bruto</th>
-                                    <th className="p-3 text-[9px] font-bold text-slate-500 uppercase tracking-wider text-right">Prima</th>
-                                    <th className="p-3 text-[9px] font-bold text-slate-500 uppercase tracking-wider text-right">Cesantías</th>
-                                    <th className="p-3 text-[9px] font-bold text-slate-500 uppercase tracking-wider text-right">Intereses</th>
-                                    <th className="p-3 text-[9px] font-bold text-slate-500 uppercase tracking-wider text-right">Vacaciones</th>
-                                    <th className="p-3 text-[9px] font-bold text-slate-500 uppercase tracking-wider text-right">Total Ingresos</th>
+                                  <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                                    <th className="p-4">Mes / Periodo</th>
+                                    <th className="p-4 text-right">Bruto</th>
+                                    <th className="p-4 text-right text-rose-500">Deducc.</th>
+                                    <th className="p-4 text-right text-slate-900 border-x border-slate-200 bg-slate-100/50">Neto Caja</th>
+                                    <th className="p-4 text-right text-emerald-600">Prima</th>
+                                    <th className="p-4 text-right text-amber-600">Cesantías</th>
+                                    <th className="p-4 text-right text-rose-500">Intereses</th>
+                                    <th className="p-4 text-right text-violet-600">Vacaciones</th>
+                                    <th className="p-4 text-right bg-slate-900 text-white">Total Patrim</th>
+                                    <th className="p-4 text-center">Accs</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
-                                  {periodsWithLiveTotals.map(p => {
+                                  {periods.sort((a, b) => b.startDate.localeCompare(a.startDate)).map(p => {
                                     const isCurrent = p.id === selectedPeriodId;
-                                    const pGross = p.liveGross;
-                                    const pPrima = p.liveGross / 12;
-                                    const pCesantias = p.liveGross / 12;
-                                    const pIntereses = p.liveGross / 12 * 0.12;
-                                    const pVacaciones = p.liveGross / 24;
-                                    const pTotal = p.livePatrimonial;
+                                    const pGross = isCurrent ? results.all.gross : (p.totalGross || 0);
+                                    const pPrima = isCurrent ? results.all.primaProporcional : (p.primaProporcional || 0);
+                                    const pCesantias = isCurrent ? results.all.cesantiasProporcional : (p.cesantiasProporcional || 0);
+                                    const pIntereses = isCurrent ? results.all.interesesCesantias : (p.interesesCesantias || 0);
+                                    const pVacaciones = isCurrent ? results.all.vacacionesProporcional : (p.vacacionesProporcional || 0);
+                                    const pTotal = isCurrent ? results.all.totalPatrimonial : (p.totalGrossWithBenefits || 0);
+                                    const pDeductions = isCurrent ? results.all.totalDeductions : (p.totalDeductions || 0);
+                                    const pNetCash = isCurrent ? results.all.netCash : (pGross - pDeductions);
 
                                     return (
-                                      <tr key={p.id} className="hover:bg-slate-50/50 transition-colors">
-                                        <td className="p-3 text-[10px] font-bold text-slate-700">
-                                          {p.name}
-                                          {isCurrent && <span className="ml-2 px-1.5 py-0.5 bg-indigo-100 text-indigo-600 text-[8px] rounded-full uppercase">Actual</span>}
+                                      <tr 
+                                        key={p.id} 
+                                        onClick={() => {
+                                          setSelectedPeriodId(p.id);
+                                          if (window.innerWidth < 1024) setShowAccumulatedDetails(false);
+                                        }}
+                                        className={`hover:bg-indigo-50/50 transition-colors cursor-pointer group ${isCurrent ? 'bg-indigo-50/30' : ''}`}
+                                      >
+                                        <td className="p-4">
+                                          <div className="flex flex-col">
+                                            <span className={`text-[11px] font-black uppercase tracking-tight ${isCurrent ? 'text-indigo-700' : 'text-slate-800'}`}>
+                                              {p.name}
+                                            </span>
+                                            <span className="text-[9px] text-slate-400 font-mono italic">{p.startDate} - {p.endDate}</span>
+                                          </div>
                                         </td>
-                                        <td className="p-3 text-[10px] font-mono text-right text-slate-600">{formatCurrency(pGross)}</td>
-                                        <td className="p-3 text-[10px] font-mono text-right text-emerald-600">{formatCurrency(pPrima)}</td>
-                                        <td className="p-3 text-[10px] font-mono text-right text-emerald-600">{formatCurrency(pCesantias)}</td>
-                                        <td className="p-3 text-[10px] font-mono text-right text-emerald-600">{formatCurrency(pIntereses)}</td>
-                                        <td className="p-3 text-[10px] font-mono text-right text-emerald-600">{formatCurrency(pVacaciones)}</td>
-                                        <td className="p-3 text-[10px] font-mono text-right font-bold text-emerald-700">{formatCurrency(pTotal)}</td>
+                                        <td className="p-4 text-[11px] font-mono text-right text-slate-600">{formatCurrency(pGross)}</td>
+                                        <td className="p-4 text-[11px] font-mono text-right text-rose-500">-{formatCurrency(pDeductions)}</td>
+                                        <td className="p-4 text-[11px] font-mono text-right font-bold text-slate-900 border-x border-slate-100 bg-slate-50/50">{formatCurrency(pNetCash)}</td>
+                                        <td className="p-4 text-[11px] font-mono text-right text-emerald-600 font-medium">+{formatCurrency(pPrima)}</td>
+                                        <td className="p-4 text-[11px] font-mono text-right text-amber-600 font-medium">+{formatCurrency(pCesantias)}</td>
+                                        <td className="p-4 text-[11px] font-mono text-right text-rose-500 font-medium">+{formatCurrency(pIntereses)}</td>
+                                        <td className="p-4 text-[11px] font-mono text-right text-violet-600 font-medium">+{formatCurrency(pVacaciones)}</td>
+                                        <td className="p-4 text-[11px] font-mono text-right font-black bg-slate-900 text-white">{formatCurrency(pTotal)}</td>
+                                        <td className="p-4 text-center">
+                                          <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                             <button 
+                                              onClick={(e) => { e.stopPropagation(); openEditPeriod(p); }}
+                                              className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-white rounded-lg transition-all"
+                                              title="Editar Periodo"
+                                            >
+                                              <Edit className="w-3.5 h-3.5" />
+                                            </button>
+                                            <button 
+                                              onClick={(e) => { e.stopPropagation(); deletePeriod(p.id); }}
+                                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-white rounded-lg transition-all"
+                                              title="Eliminar Registro"
+                                            >
+                                              <Trash2 className="w-3.5 h-3.5" />
+                                            </button>
+                                          </div>
+                                        </td>
                                       </tr>
                                     );
                                   })}
                                 </tbody>
+                                <tfoot>
+                                  <tr className="bg-slate-900 text-white font-black text-[10px] uppercase tracking-widest">
+                                    <td className="p-4">TOTAL ACUMULADO</td>
+                                    <td className="p-4 text-right">{formatCurrency(accumulated.gross)}</td>
+                                    <td className="p-4 text-right text-rose-400">-{formatCurrency(accumulated.deductions)}</td>
+                                    <td className="p-4 text-right border-x border-white/10 bg-white/5">{formatCurrency(accumulated.gross - accumulated.deductions)}</td>
+                                    <td className="p-4 text-right text-emerald-400">+{formatCurrency(accumulated.prima)}</td>
+                                    <td className="p-4 text-right text-amber-400">+{formatCurrency(accumulated.cesantias)}</td>
+                                    <td className="p-4 text-right text-rose-400">+{formatCurrency(accumulated.intereses)}</td>
+                                    <td className="p-4 text-right text-violet-400">+{formatCurrency(accumulated.vacaciones)}</td>
+                                    <td className="p-4 text-right bg-white text-slate-900 text-xs">{formatCurrency(accumulated.totalGross)}</td>
+                                    <td className="p-4"></td>
+                                  </tr>
+                                </tfoot>
                               </table>
+                            </div>
+                            <div className="p-6 bg-indigo-50/50 border-t border-slate-200">
+                               <h5 className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-4 flex items-center gap-2">
+                                  <Info className="w-4 h-4" />
+                                  Algoritmo de Consolidación (Validación de Auditoría)
+                               </h5>
+                               <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-[11px] leading-relaxed text-slate-600">
+                                  <div className="space-y-2">
+                                     <p><span className="font-bold text-slate-900">1. Liquidez (Caja):</span> Se calcula sumando el <span className="italic">Bruto (Turnos)</span> de cada periodo y restando las <span className="italic">Deducciones</span> legales y manuales. Esta es la sumatoria de lo que has recibido físicamente en tu cuenta.</p>
+                                     <p className="font-mono bg-white p-2 rounded-lg border border-slate-200">
+                                        Σ(Bruto) - Σ(Deducciones) = {formatCurrency(accumulated.gross - accumulated.deductions)}
+                                     </p>
+                                  </div>
+                                  <div className="space-y-2">
+                                     <p><span className="font-bold text-slate-900">2. Patrimonio Total:</span> Es la sumatoria de la liquidez más las <span className="italic">Provisiones Prestacionales</span> (Primas, Cesantías, Vacaciones). Este valor representa la riqueza real generada antes de impuestos efectivos, incluyendo ahorros obligatorios.</p>
+                                     <p className="font-mono bg-slate-900 p-2 rounded-lg text-indigo-300">
+                                        Saldo Caja + Σ(Prestaciones) = {formatCurrency(accumulated.totalGross)}
+                                     </p>
+                                  </div>
+                               </div>
                             </div>
                           </motion.div>
                         )}
@@ -5429,100 +6070,105 @@ function MainApp() {
               </div>
             </div>
           </section>
-
-          {/* Step 6: Period History */}
-          <section className="space-y-6">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-slate-800 text-white flex items-center justify-center font-bold text-sm">6</div>
-              <h2 className="text-xl font-bold text-slate-800">Historial de Periodos</h2>
-            </div>
-
-            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-              {periods.length === 0 ? (
-                <div className="text-center py-10 space-y-4">
-                  <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto text-slate-400">
-                    <History className="w-8 h-8" />
-                  </div>
-                  <p className="text-slate-500 font-medium">No hay historial de periodos registrados.</p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto rounded-3xl border border-slate-200">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200">
-                        <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Estado</th>
-                        <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Periodo / Mes</th>
-                        <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Devengado (Mes)</th>
-                        <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Patrimon. (+Prest)</th>
-                        <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Acciones</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {[...periodsWithLiveTotals].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).map(p => {
-                        const isSelected = selectedPeriodId === p.id;
-                        const displayGross = p.liveGross;
-                        const displayTotal = p.liveNet;
-
-                        return (
-                          <tr 
-                            key={p.id}
-                            onClick={() => setSelectedPeriodId(p.id)}
-                            className={`group cursor-pointer transition-colors ${
-                              isSelected ? 'bg-indigo-50/50' : 'hover:bg-slate-50/80 bg-white'
-                            }`}
-                          >
-                            <td className="p-4">
-                              <span className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest ${
-                                p.status === 'active' 
-                                  ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' 
-                                  : 'bg-slate-100 text-slate-500 border border-slate-200'
-                              }`}>
-                                {p.status === 'active' ? 'Sync' : 'Arc'}
-                              </span>
-                            </td>
-                            <td className="p-4">
-                              <div className="flex flex-col">
-                                <span className={`text-sm font-bold ${isSelected ? 'text-indigo-700' : 'text-slate-800'}`}>{p.name}</span>
-                                <span className="text-[10px] text-slate-400 font-medium font-mono">{p.startDate} → {p.endDate}</span>
-                              </div>
-                            </td>
-                            <td className="p-4 text-right">
-                              <span className={`text-sm font-mono font-bold ${isSelected ? 'text-indigo-600' : 'text-slate-700'}`}>
-                                {formatCurrency(displayGross)}
-                              </span>
-                            </td>
-                            <td className="p-4 text-right border-l border-slate-50 group-hover:border-slate-100">
-                              <span className={`text-sm font-mono font-bold ${isSelected ? 'text-emerald-700' : 'text-slate-700'}`}>
-                                {formatCurrency(displayTotal)}
-                              </span>
-                            </td>
-                            <td className="p-4 text-right">
-                              <div className="flex items-center justify-end gap-2">
-                                <button 
-                                  onClick={(e) => { e.stopPropagation(); openEditPeriod(p); }}
-                                  className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-white border border-transparent hover:border-indigo-100 rounded-xl transition-all"
-                                >
-                                  <Edit className="w-4 h-4" />
-                                </button>
-                                <button 
-                                  onClick={(e) => { e.stopPropagation(); deletePeriod(p.id); }}
-                                  className="p-2 text-slate-400 hover:text-rose-600 hover:bg-white border border-transparent hover:border-rose-100 rounded-xl transition-all"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </section>
         </main>
       </div>
+
+      <AnimatePresence>
+          {showHistoricalModal && (
+            <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="bg-white w-full max-w-md rounded-[32px] shadow-2xl overflow-hidden border border-slate-100"
+              >
+                <div className="p-6 bg-emerald-600 text-white flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Archive className="w-5 h-5" />
+                    <h3 className="font-bold uppercase tracking-tight">Registro Histórico Manual</h3>
+                  </div>
+                  <button onClick={() => setShowHistoricalModal(false)} className="p-1 hover:bg-white/20 rounded-lg">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                
+                <div className="p-8 space-y-6">
+                  <p className="text-sm text-slate-500 leading-relaxed">
+                    Ingresa periodos anteriores manualmente para alimentar los promedios de prestaciones sociales (Prima, Cesantías, Vacaciones).
+                  </p>
+
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-wider">Nombre del Periodo</label>
+                      <input 
+                        type="text"
+                        placeholder="Ej: Enero 2026"
+                        value={historicalData.name}
+                        onChange={(e) => setHistoricalData({ ...historicalData, name: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-wider">Mes</label>
+                        <select 
+                          value={historicalData.month}
+                          onChange={(e) => setHistoricalData({ ...historicalData, month: Number(e.target.value) })}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                        >
+                          {Array.from({ length: 12 }, (_, i) => (
+                            <option key={i + 1} value={i + 1}>
+                              {new Date(2026, i).toLocaleString('es-ES', { month: 'long' })}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-wider">Año</label>
+                        <input 
+                          type="number"
+                          value={historicalData.year}
+                          onChange={(e) => setHistoricalData({ ...historicalData, year: Number(e.target.value) })}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition-all font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-wider">Salario Bruto (Turnos)</label>
+                      <div className="relative">
+                        <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                        <input 
+                          type="number"
+                          value={historicalData.gross}
+                          onChange={(e) => setHistoricalData({ ...historicalData, gross: Number(e.target.value) })}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pl-10 pr-4 text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition-all font-mono font-bold text-emerald-600"
+                        />
+                      </div>
+                      <p className="text-[9px] text-slate-400 mt-1 italic">Este valor se usará para promediar las prestaciones sociales del semestre y año.</p>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3 pt-2">
+                    <button 
+                      onClick={() => setShowHistoricalModal(false)}
+                      className="flex-1 py-4 bg-slate-50 text-slate-600 font-bold rounded-2xl hover:bg-slate-100 transition-all border border-slate-200"
+                    >
+                      Cancelar
+                    </button>
+                    <button 
+                      onClick={saveHistoricalPeriod}
+                      className="flex-1 py-4 bg-emerald-600 text-white font-bold rounded-2xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200"
+                    >
+                      Registrar Histórico
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
 
       {/* Footer Info */}
       <footer className="bg-slate-900 text-slate-400 p-10 text-center space-y-4">
@@ -5538,7 +6184,7 @@ function MainApp() {
           © 2026 • Desarrollado para el Gremio Médico
         </div>
       </footer>
-      {/* Period Selection Modal (After Save and Close) */}
+
       <AnimatePresence>
         {showPeriodSelectionModal && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
@@ -5910,6 +6556,102 @@ function MainApp() {
           </div>
         )}
       </AnimatePresence>
+
+      {showConfigConfirmModal && (
+        <ConfigConfirmModal 
+          diffs={configDiffs}
+          onConfirm={confirmConfigChanges}
+          onCancel={discardConfigChanges}
+        />
+      )}
+    </div>
+  );
+}
+
+function ConfigConfirmModal({ diffs, onConfirm, onCancel }: { 
+  diffs: { label: string, old: any, new: any }[], 
+  onConfirm: () => void, 
+  onCancel: () => void 
+}) {
+  return (
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="bg-white rounded-[32px] shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh] border border-slate-100"
+      >
+        <div className="p-8 border-b border-slate-50 bg-slate-50/30 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center shadow-inner">
+              <ShieldCheck className="w-7 h-7" />
+            </div>
+            <div>
+              <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Confirmar Ajustes</h2>
+              <p className="text-xs text-slate-500 font-bold uppercase tracking-widest opacity-60">Resumen de cambios realizados</p>
+            </div>
+          </div>
+          <button onClick={onCancel} className="p-2 text-slate-300 hover:text-slate-900 transition-colors">
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+
+        <div className="p-8 overflow-y-auto custom-scrollbar flex-1 bg-white">
+          <div className="space-y-6">
+            <div className="flex items-start gap-3 p-4 bg-amber-50 text-amber-700 rounded-2xl border border-amber-100 shadow-sm">
+              <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
+              <div>
+                <h4 className="text-[10px] font-black uppercase mb-1">Aviso de Seguridad</h4>
+                <p className="text-[10px] font-bold leading-relaxed opacity-80">
+                  Estás modificando parámetros clave que alteran el cálculo de tus ingresos. Por favor, verifica que las nuevas tarifas coincidan con tu contrato vigente.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Lista de Modificaciones ({diffs.length}):</p>
+              <div className="space-y-2">
+                {diffs.map((diff, index) => (
+                  <div key={index} className="group p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-indigo-200 transition-all">
+                    <p className="text-[9px] font-black text-indigo-500 uppercase mb-2 tracking-tighter">{diff.label}</p>
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 bg-white p-2 rounded-xl text-center shadow-sm border border-slate-50">
+                        <span className="block text-[8px] text-slate-400 font-bold uppercase mb-0.5">Anterior</span>
+                        <span className="text-xs font-mono text-slate-400 line-through">
+                          {typeof diff.old === 'number' ? formatCurrency(diff.old) : diff.old}
+                        </span>
+                      </div>
+                      <div className="shrink-0 flex items-center justify-center p-1 bg-indigo-50 text-indigo-300 rounded-full">
+                        <ChevronRight className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1 bg-emerald-50 p-2 rounded-xl text-center shadow-sm border border-emerald-100">
+                        <span className="block text-[8px] text-emerald-600 font-bold uppercase mb-0.5">Nuevo</span>
+                        <span className="text-xs font-mono font-black text-emerald-700">
+                          {typeof diff.new === 'number' ? formatCurrency(diff.new) : diff.new}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-8 bg-slate-50/50 border-t border-slate-100 flex items-center gap-4">
+          <button 
+            onClick={onCancel}
+            className="flex-1 py-4 bg-white border border-slate-200 text-slate-600 font-black uppercase tracking-widest text-[10px] rounded-2xl hover:bg-slate-50 transition-all shadow-sm"
+          >
+            Descartar
+          </button>
+          <button 
+            onClick={onConfirm}
+            className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-indigo-700 transition-all shadow-[0_8px_16px_-4px_rgba(79,70,229,0.3)] active:scale-95"
+          >
+            Guardar Cambios
+          </button>
+        </div>
+      </motion.div>
     </div>
   );
 }
