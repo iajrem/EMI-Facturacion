@@ -36,7 +36,6 @@ import {
   User as UserIcon,
   CheckCircle2 as CheckIcon,
   Archive,
-  Printer,
   PlusCircle,
   MinusCircle,
   History,
@@ -50,8 +49,8 @@ import {
   ShieldCheck,
   Check,
 } from 'lucide-react';
-import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { utils, writeFile } from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -757,25 +756,25 @@ const calculatePeriodTotals = (
   });
 
   const hoursValues = {
-    day: hoursBreakdown.day * (r.base?.consultation || 0),
-    night: hoursBreakdown.night * (r.base?.consultation || 0) * (1 + r.surcharges.night),
-    holidayDay: hoursBreakdown.holidayDay * (r.base?.consultation || 0) * (1 + r.surcharges.holidayDay),
-    holidayNight: hoursBreakdown.holidayNight * (r.base?.consultation || 0) * (1 + r.surcharges.holidayNight),
-    extraDay: hoursBreakdown.extraDay * (r.base?.consultation || 0) * (1 + r.surcharges.extraDay),
-    extraNight: hoursBreakdown.extraNight * (r.base?.consultation || 0) * (1 + r.surcharges.extraNight),
-    extraHolidayDay: hoursBreakdown.extraHolidayDay * (r.base?.consultation || 0) * (1 + r.surcharges.extraHolidayDay),
-    extraHolidayNight: hoursBreakdown.extraHolidayNight * (r.base?.consultation || 0) * (1 + r.surcharges.extraHolidayNight),
+    day: hoursBreakdown.day * r.hourly.day,
+    night: hoursBreakdown.night * r.hourly.night,
+    holidayDay: hoursBreakdown.holidayDay * r.hourly.holidayDay,
+    holidayNight: hoursBreakdown.holidayNight * r.hourly.holidayNight,
+    extraDay: hoursBreakdown.extraDay * r.hourly.extraDay,
+    extraNight: hoursBreakdown.extraNight * r.hourly.extraNight,
+    extraHolidayDay: hoursBreakdown.extraHolidayDay * r.hourly.extraHolidayDay,
+    extraHolidayNight: hoursBreakdown.extraHolidayNight * r.hourly.extraHolidayNight,
   };
 
   const avaVirtualValues = {
-    day: avaVirtualBreakdown.day * (r.base?.ava || 0),
-    night: avaVirtualBreakdown.night * (r.base?.ava || 0) * (1 + r.surcharges.night),
-    holidayDay: avaVirtualBreakdown.holidayDay * (r.base?.ava || 0) * (1 + r.surcharges.holidayDay),
-    holidayNight: avaVirtualBreakdown.holidayNight * (r.base?.ava || 0) * (1 + r.surcharges.holidayNight),
-    extraDay: avaVirtualBreakdown.extraDay * (r.base?.ava || 0) * (1 + r.surcharges.extraDay),
-    extraNight: avaVirtualBreakdown.extraNight * (r.base?.ava || 0) * (1 + r.surcharges.extraNight),
-    extraHolidayDay: avaVirtualBreakdown.extraHolidayDay * (r.base?.ava || 0) * (1 + r.surcharges.extraHolidayDay),
-    extraHolidayNight: avaVirtualBreakdown.extraHolidayNight * (r.base?.ava || 0) * (1 + r.surcharges.extraHolidayNight),
+    day: avaVirtualBreakdown.day * r.ava.day,
+    night: avaVirtualBreakdown.night * r.ava.night,
+    holidayDay: avaVirtualBreakdown.holidayDay * r.ava.holidayDay,
+    holidayNight: avaVirtualBreakdown.holidayNight * r.ava.holidayNight,
+    extraDay: avaVirtualBreakdown.extraDay * r.ava.extraDay,
+    extraNight: avaVirtualBreakdown.extraNight * r.ava.extraNight,
+    extraHolidayDay: avaVirtualBreakdown.extraHolidayDay * r.ava.extraHolidayDay,
+    extraHolidayNight: avaVirtualBreakdown.extraHolidayNight * r.ava.extraHolidayNight,
   };
 
   const patientsValues = {
@@ -1048,6 +1047,33 @@ function MainApp() {
   const [periods, setPeriods] = useState<BillingPeriod[]>([]);
   const [activePeriod, setActivePeriod] = useState<BillingPeriod | null>(null);
   const [selectedPeriodId, setSelectedPeriodId] = useState<string | null>(null);
+  const [formTouched, setFormTouched] = useState(false);
+
+  // 1. Version Checking & Cache Busting
+  useEffect(() => {
+    // Definimos una versión única para este despliegue
+    const BUILD_ID = "v_20260501_0012";
+    const storedVersion = localStorage.getItem('app_deployment_id');
+
+    if (storedVersion && storedVersion !== BUILD_ID) {
+      console.warn("Nueva versión detectada, actualizando aplicación...");
+      localStorage.setItem('app_deployment_id', BUILD_ID);
+      
+      // Limpiar caches de service workers si existieran en el futuro
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(registrations => {
+          for (const registration of registrations) {
+            registration.unregister();
+          }
+        });
+      }
+
+      // Recarga forzada para obtener los nuevos assets de Vite
+      window.location.reload();
+    } else {
+      localStorage.setItem('app_deployment_id', BUILD_ID);
+    }
+  }, []);
   const [showPeriodModal, setShowPeriodModal] = useState(false);
   const [newTrisemanaData, setNewTrisemanaData] = useState({
     name: '',
@@ -1116,6 +1142,8 @@ function MainApp() {
             usePensionVoluntaria: true,
             useInteresesVivienda: true,
             primaLastResetDate: null,
+            useManualRetefuente: false,
+            manualRetefuentePct: 0,
           };
 
           Object.entries(missingFields).forEach(([key, value]) => {
@@ -1441,7 +1469,7 @@ function MainApp() {
     // Real-time projection: if we are not editing (meaning we are adding), 
     // and the current form has a date, inject it as a projection if it's not already in recordsToCalculate
     // DISABLE projections for archived views or archived periods
-    const isShiftDirty = !viewingArchive && currentPeriod?.status !== 'archived' && (Object.values(quantities.hours).some(v => v > 0) || 
+    const isShiftDirty = !viewingArchive && currentPeriod?.status !== 'archived' && formTouched && (Object.values(quantities.hours).some(v => v > 0) || 
                         Object.values(quantities.ava).some(v => v > 0) || 
                         Object.values(quantities.patients).some(v => v > 0));
 
@@ -1533,7 +1561,7 @@ function MainApp() {
       definitive: definitiveResults,
       calculationRates
     };
-  }, [records, viewingArchive, periods, selectedPeriodId, rates, additionalDeductions, editingId, shift, quantities, user, allRecords, trisemanas]);
+  }, [records, viewingArchive, periods, selectedPeriodId, rates, additionalDeductions, editingId, shift, quantities, user, allRecords, trisemanas, formTouched]);
 
   const allRecordsAreDefinitive = useMemo(() => {
     return records.length > 0 && records.every(r => r.isDefinitive);
@@ -1544,14 +1572,35 @@ function MainApp() {
     if (!records.length) return;
 
     let totalGrossVerified = 0;
-    const errors: string[] = [];
+    
+    // We iterate over the distributions calculated by the engine to ensure consistency
+    // This includes both definitive records and the draft/projection
+    Object.entries(results.all.recordDistributions).forEach(([id, dist]) => {
+      // Find the record in the pool or the draft
+      let r = [...records, ...allRecords].find(rec => rec.id === id);
+      
+      // If it's the draft, we construct it like useMemo does
+      if (id === 'draft-temp-id') {
+        r = {
+          id: 'draft-temp-id',
+          userId: user?.uid || '',
+          date: shift.date,
+          startTime: shift.startTime,
+          endTime: shift.endTime,
+          hours: { ...quantities.hours },
+          ava: { ...quantities.ava },
+          patients: { ...quantities.patients },
+          applyPatients: quantities.applyPatients,
+          isDefinitive: false,
+          isAVAShift: shift.isAVAShift || shift.isVirtualShift
+        } as ShiftRecord;
+      }
 
-    records.forEach(r => {
-      const dist = results.all.recordDistributions[r.id];
-      if (dist) {
+      if (r && dist) {
+        const isAVAMain = r.isAVAShift || r.isVirtualShift || (Object.values(r.ava || {}).some(v => v > 0) && Object.values(r.hours || {}).every(v => v === 0));
         const val = calculateShiftValue({
           ...r,
-          isAVAShift: r.isAVAShift || r.isVirtualShift || (Object.values(r.ava || {}).some(v => v > 0) && Object.values(r.hours || {}).every(v => v === 0))
+          isAVAShift: isAVAMain
         }, results.calculationRates, dist);
         
         const recordGross = val.base + val.service + val.extraSurcharge + val.avaVirtual;
@@ -1569,7 +1618,7 @@ function MainApp() {
     } else {
       setExtractVerified({ isValid: true, errorRecords: [] });
     }
-  }, [records, results.all.gross, results.all.recordDistributions, results.calculationRates]);
+  }, [records, results.all.gross, results.all.recordDistributions, results.calculationRates, shift, quantities]);
   const [showDeductionDetails, setShowDeductionDetails] = useState(false);
   const [showIncomeDetails, setShowIncomeDetails] = useState(false);
   const [originalRecord, setOriginalRecord] = useState<ShiftRecord | null>(null);
@@ -1677,7 +1726,7 @@ function MainApp() {
     };
 
     return { h, isSpecial: shift.isAVAShift || shift.isVirtualShift };
-  }, [shift.startTime, shift.endTime, shift.date, shift.isHolidayStart, shift.isHolidayEnd, shift.isAVAShift, shift.isVirtualShift, shift.isExtraShift, rates, selectedPeriodId, periods, records, allRecords, trisemanas, editingId, viewingArchive]);
+  }, [shift.startTime, shift.endTime, shift.date, shift.isHolidayStart, shift.isHolidayEnd, shift.isAVAShift, shift.isVirtualShift, shift.isExtraShift, rates, selectedPeriodId, periods, records, allRecords, trisemanas, editingId, viewingArchive, manualTrisemanaId]);
 
   useEffect(() => {
     if (!autoCalculatedDistribution) return;
@@ -1689,20 +1738,23 @@ function MainApp() {
         day: 0, night: 0, holidayDay: 0, holidayNight: 0,
         extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0
       };
+      const zeroPatients = { day: 0, night: 0, holidayDay: 0, holidayNight: 0 };
 
+      // Si el usuario cambia el intervalo, queremos que los pacientes también se reinicien 
+      // si no coinciden con las nuevas horas disponibles en esas categorías.
+      // Siguiendo la petición del usuario: "el valor previo se reinicia a 0 y se reemplaza con el nuevo valor"
+      
       return {
         ...prev,
         hours: isSpecial ? zeroHours : h,
-        ava: shift.isAVAShift ? h : zeroHours,
-        // We'll reuse the 'ava' bucket for Virtual shifts in the state for now, 
-        // but the calculation logic in calculatePeriodTotals will handle them correctly
+        ava: (shift.isAVAShift || shift.isVirtualShift) ? h : zeroHours,
         patients: (autoCalculatePatients && !isSpecial) ? {
           day: h.day, night: h.night, holidayDay: h.holidayDay, holidayNight: h.holidayNight
-        } : (isSpecial ? { day: 0, night: 0, holidayDay: 0, holidayNight: 0 } : prev.patients),
+        } : (isSpecial ? zeroPatients : (autoCalculatePatients ? zeroPatients : prev.patients)),
         applyPatients: isSpecial ? false : prev.applyPatients
       };
     });
-  }, [autoCalculatedDistribution, autoCalculatePatients, shift.isAVAShift]);
+  }, [autoCalculatedDistribution, autoCalculatePatients, shift.isAVAShift, shift.isVirtualShift]);
 
   // --- Actions ---
   const savePeriod = async () => {
@@ -2048,6 +2100,7 @@ function MainApp() {
 
   const resetShiftForm = () => {
     setEditingId(null);
+    setFormTouched(false);
     setOriginalRecord(null);
     setManualTrisemanaId(null);
     setShift({
@@ -2444,6 +2497,7 @@ function MainApp() {
       type: 'edit',
       onConfirm: () => {
         setEditingId(record.id);
+        setFormTouched(true);
         setOriginalRecord(record);
         setShift({ 
           date: record.date,
@@ -2556,179 +2610,224 @@ function MainApp() {
     writeFile(wb, `Extracto_${periodName.replace(/\s+/g, '_')}.xlsx`);
   };
 
-  const exportToPDF = () => {
-    const doc = new jsPDF();
-    const period = periods.find(p => p.id === selectedPeriodId);
-    const baseRecords = viewingArchive ? viewingArchive.records : records;
-    const periodName = period?.name || 'Extracto de Pago';
-    const dateRange = period ? `${period.startDate} a ${period.endDate}` : '';
-    const semester = new Date().getMonth() < 6 ? '1' : '2';
-    
-    // Header
-    doc.setFontSize(22);
-    doc.setTextColor(15, 23, 42); // slate-900
-    doc.setFont('helvetica', 'bold');
-    doc.text('EXTRACTO TÉCNICO DE PAGO', 14, 22);
-    
-    doc.setFontSize(8);
-    doc.setTextColor(100, 116, 139); // slate-500
-    doc.setFont('helvetica', 'normal');
-    doc.text('LIQUIDACIÓN OFICIAL DE HONORARIOS Y PRESTACIONES', 14, 27);
-    
-    doc.setFontSize(9);
-    doc.setTextColor(30, 41, 59); // slate-800
-    const headerInfo = [
-      `Periodo: ${periodName}`,
-      `Rango: ${dateRange}`,
-      `Trisemanas: ${trisemanas.filter(t => (t.startDate <= (period?.endDate || '') && t.endDate >= (period?.startDate || ''))).map(t => `${t.startDate} a ${t.endDate}`).join(', ') || 'N/A'}`,
-      `Cargo: ${rates.payroll.jobTitle}`,
-      `Generado: ${new Date().toLocaleString()}`
-    ];
-    headerInfo.forEach((text, i) => doc.text(text, 14, 35 + (i * 5)));
-
-    // 1. Resumen de Devengado
-    doc.setFontSize(12);
-    doc.setFont('helvetica', 'bold');
-    doc.text('1. DESGLOSE DE INGRESOS (DEVENGADO)', 14, 65);
-    
-    const incomeData = [
-      ['Concepto', 'Detalle/Horas', 'Valor'],
-      ['Consulta y Horas Libres', `${results.definitive.hoursBreakdown.day + results.definitive.hoursBreakdown.night + results.definitive.hoursBreakdown.holidayDay + results.definitive.hoursBreakdown.holidayNight}h Totales`, formatCurrency(results.definitive.grossBreakdown.consultationBase)],
-      ['AVA / Virtual', `${results.definitive.avaBreakdown.day + results.definitive.avaBreakdown.night + results.definitive.avaBreakdown.holidayDay + results.definitive.avaBreakdown.holidayNight}h Totales`, formatCurrency(results.definitive.grossBreakdown.ava)],
-      ['Productividad (Pacientes)', `${results.definitive.totalMonthlyPatients} Pacientes`, formatCurrency(results.definitive.grossBreakdown.service)],
-      ['SUBTOTAL BRUTO', '', formatCurrency(results.definitive.gross)],
-    ];
-
-    (doc as any).autoTable({
-      startY: 68,
-      head: [incomeData[0]],
-      body: incomeData.slice(1, 4),
-      foot: [incomeData[4]],
-      theme: 'grid',
-      headStyles: { fillColor: [15, 23, 42], textColor: 255 },
-      footStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold' },
-      columnStyles: { 2: { halign: 'right' } }
-    });
-
-    // 2. Discriminación de Horas
-    const nextY = (doc as any).lastAutoTable.finalY + 10;
-    doc.setFontSize(12);
-    doc.text('2. DISCRIMINACIÓN DE TURNOS Y VALORES', 14, nextY);
-    
-    const hourData = [
-      ['Tipo / Categoría', 'Diurnas', 'Nocturnas', 'Festivas Diu', 'Festivas Noc', 'Totales'],
-      ['Horas Consulta', results.definitive.hoursBreakdown.day.toFixed(1), results.definitive.hoursBreakdown.night.toFixed(1), results.definitive.hoursBreakdown.holidayDay.toFixed(1), results.definitive.hoursBreakdown.holidayNight.toFixed(1), (results.definitive.hoursBreakdown.day + results.definitive.hoursBreakdown.night + results.definitive.hoursBreakdown.holidayDay + results.definitive.hoursBreakdown.holidayNight).toFixed(1)],
-      ['Valor Consulta', formatCurrency(results.definitive.hoursValues.day), formatCurrency(results.definitive.hoursValues.night), formatCurrency(results.definitive.hoursValues.holidayDay), formatCurrency(results.definitive.hoursValues.holidayNight), formatCurrency(results.definitive.grossBreakdown.consultationBase)],
-      ['Horas AVA / Virt', results.definitive.avaBreakdown.day.toFixed(1), results.definitive.avaBreakdown.night.toFixed(1), results.definitive.avaBreakdown.holidayDay.toFixed(1), results.definitive.avaBreakdown.holidayNight.toFixed(1), (results.definitive.avaBreakdown.day + results.definitive.avaBreakdown.night + results.definitive.avaBreakdown.holidayDay + results.definitive.avaBreakdown.holidayNight).toFixed(1)],
-      ['Valor AVA / Virt', formatCurrency(results.definitive.avaValues.day), formatCurrency(results.definitive.avaValues.night), formatCurrency(results.definitive.avaValues.holidayDay), formatCurrency(results.definitive.avaValues.holidayNight), formatCurrency(results.definitive.grossBreakdown.ava)],
-      ['Uni. Pacientes', results.definitive.patientsBreakdown.day, results.definitive.patientsBreakdown.night, results.definitive.patientsBreakdown.holidayDay, results.definitive.patientsBreakdown.holidayNight, results.all.totalMonthlyPatients],
-      ['Valor Pacientes', formatCurrency(results.definitive.patientsValues.day), formatCurrency(results.definitive.patientsValues.night), formatCurrency(results.definitive.patientsValues.holidayDay), formatCurrency(results.definitive.patientsValues.holidayNight), formatCurrency(results.definitive.grossBreakdown.service)],
-    ];
-
-    (doc as any).autoTable({
-      startY: nextY + 3,
-      head: [hourData[0]],
-      body: hourData.slice(1),
-      theme: 'grid',
-      headStyles: { fillColor: [51, 65, 85] },
-      styles: { fontSize: 7, halign: 'center' },
-      columnStyles: { 0: { halign: 'left', fontStyle: 'bold' } }
-    });
-
-    // 3. Deducciones
-    const dedY = (doc as any).lastAutoTable.finalY + 10;
-    doc.setFontSize(12);
-    doc.text('3. DEDUCCIONES LEGALES', 14, dedY);
-    
-    const deductionData = [
-      ['Concepto', 'Base / Porcentaje', 'Valor'],
-      ['Aporte Salud', `4% de ${formatCurrency(results.definitive.ibc)}`, `-${formatCurrency(results.definitive.taxBreakdown.health)}`],
-      ['Aporte Pensión', `4% de ${formatCurrency(results.definitive.ibc)}`, `-${formatCurrency(results.definitive.taxBreakdown.pension)}`],
-      ['Fondo Solidaridad', results.definitive.taxBreakdown.fsp > 0 ? 'Aplicado' : 'N/A', `-${formatCurrency(results.definitive.taxBreakdown.fsp)}`],
-      ['Retefuente', rates.payroll.useManualRetefuente ? `${rates.payroll.manualRetefuentePct}%` : 'Tabla Art. 383', `-${formatCurrency(results.definitive.taxBreakdown.retefuente)}`],
-      ['Otras Deducciones', 'Manuales', `-${formatCurrency(results.definitive.taxBreakdown.additionalDeductions)}`],
-      ['TOTAL DEDUCCIONES', '', `-${formatCurrency(results.definitive.totalDeductions)}`],
-    ];
-
-    (doc as any).autoTable({
-      startY: dedY + 3,
-      head: [deductionData[0]],
-      body: deductionData.slice(1, 6),
-      foot: [deductionData[6]],
-      theme: 'grid',
-      headStyles: { fillColor: [153, 27, 27] },
-      footStyles: { fillColor: [254, 242, 242], textColor: [153, 27, 27] },
-      columnStyles: { 2: { halign: 'right' } }
-    });
-
-    // 4. Beneficios Sociales
-    const benY = (doc as any).lastAutoTable.finalY + 10;
-    doc.text(`4. PRESTACIONES SOCIALES (SEMESTRE ${semester})`, 14, benY);
-    
-    const benefitData = [
-      ['Concepto', 'Descripción', 'Valor Acumulado'],
-      [`Prima de Servicios S${semester}`, `Cálculo proporcional mensual`, formatCurrency(results.definitive.primaProporcional)],
-      ['Cesantías', 'Ahorro prestacional', formatCurrency(results.definitive.cesantiasProporcional)],
-      ['Intereses Cesantías', '12% anual (1% mensual)', formatCurrency(results.definitive.interesesCesantias)],
-      ['Vacaciones', 'Descanso remunerado', formatCurrency(results.definitive.vacacionesProporcional)],
-      ['TOTAL PATRIMONIAL ACUMULADO', '', formatCurrency(results.definitive.primaProporcional + results.definitive.cesantiasProporcional + results.definitive.interesesCesantias + results.definitive.vacacionesProporcional)],
-    ];
-
-    (doc as any).autoTable({
-      startY: benY + 3,
-      head: [benefitData[0]],
-      body: benefitData.slice(1, 5),
-      foot: [benefitData[5]],
-      theme: 'grid',
-      headStyles: { fillColor: [30, 58, 138] },
-      footStyles: { fillColor: [238, 242, 255], textColor: [30, 58, 138] },
-      columnStyles: { 2: { halign: 'right' } }
-    });
-
-    // Final Net
-    const netY = (doc as any).lastAutoTable.finalY + 15;
-    doc.setFillColor(15, 23, 42);
-    doc.rect(14, netY, 182, 20, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(14);
-    doc.text('TOTAL NETO A RECIBIR (CAJA):', 20, netY + 13);
-    doc.setFontSize(18);
-    doc.text(formatCurrency(results.definitive.netCash), 190, netY + 13, { align: 'right' });
-
-    // 5. Listado Detallado de Turnos (La "Discriminación" solicitada)
-    doc.addPage();
-    doc.setTextColor(15, 23, 42);
-    doc.setFontSize(14);
-    doc.setFont('helvetica', 'bold');
-    doc.text('5. ANEXO: LISTADO DETALLADO DE TURNOS', 14, 20);
-    
-    const detailedRecords = baseRecords.map(r => {
-      const isAVAMain = r.isAVAShift || r.isVirtualShift || (Object.values(r.ava || {}).some(v => (v as number) > 0) && Object.values(r.hours || {}).every(v => v === 0));
-      const dist = results.all.recordDistributions[r.id];
-      const val = calculateShiftValue({ ...r, isAVAShift: isAVAMain }, results.calculationRates, dist);
-      const totalHours = (dist?.ord.day || 0) + (dist?.ord.night || 0) + (dist?.ord.holidayDay || 0) + (dist?.ord.holidayNight || 0) +
-                         (dist?.extra.day || 0) + (dist?.extra.night || 0) + (dist?.extra.holidayDay || 0) + (dist?.extra.holidayNight || 0);
+  const exportToPDF = (useDraft: boolean = false) => {
+    try {
+      const doc = new jsPDF() as any;
+      const period = periods.find(p => p.id === selectedPeriodId);
+      const baseRecords = viewingArchive ? viewingArchive.records : records;
+      const periodName = period?.name || (useDraft ? 'Borrador de Pago' : 'Extracto de Pago');
+      const dateRange = period ? `${period.startDate} a ${period.endDate}` : '';
+      const semester = new Date().getMonth() < 6 ? '1' : '2';
       
-      return [
-        r.date,
-        `${r.startTime}-${r.endTime}`,
-        isAVAMain ? 'AVA/Virt' : 'Consul.',
-        totalHours.toFixed(1),
-        r.applyPatients ? (r.patients.day + r.patients.night + r.patients.holidayDay + r.patients.holidayNight) : 'H',
-        formatCurrency(val.base + val.service + val.avaVirtual)
+      const activeResults = useDraft ? results.all : results.definitive;
+
+      // Header
+      doc.setFontSize(22);
+      doc.setTextColor(15, 23, 42); // slate-900
+      doc.setFont('helvetica', 'bold');
+      doc.text(useDraft ? 'BORRADOR TÉCNICO DE PAGO' : 'EXTRACTO TÉCNICO DE PAGO', 14, 22);
+      
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139); // slate-500
+      doc.setFont('helvetica', 'normal');
+      doc.text(useDraft ? 'PROYECCIÓN DE HONORARIOS Y PRESTACIONES' : 'LIQUIDACIÓN OFICIAL DE HONORARIOS Y PRESTACIONES', 14, 27);
+      
+      doc.setFontSize(9);
+      doc.setTextColor(30, 41, 59); // slate-800
+      const headerInfo = [
+        `Periodo: ${periodName}`,
+        `Rango: ${dateRange}`,
+        `Cargo: ${rates.payroll.jobTitle}`,
+        `Generado: ${new Date().toLocaleString()}`,
+        `Trisemanas Relacionadas: ${trisemanas.filter(t => 
+           (t.startDate <= (period?.endDate || '') && t.endDate >= (period?.startDate || ''))
+        ).map(t => t.name).join(', ') || 'N/A'}`
       ];
-    });
+      headerInfo.forEach((text, i) => doc.text(text, 14, 35 + (i * 5)));
 
-    (doc as any).autoTable({
-      startY: 25,
-      head: [['Fecha', 'Horario', 'Tipo', 'Hrs', 'Pac.', 'Bruto']],
-      body: detailedRecords,
-      theme: 'striped',
-      styles: { fontSize: 7 },
-      headStyles: { fillColor: [51, 65, 85] }
-    });
+      // 1. Resumen de Devengado
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text('1. DESGLOSE DE INGRESOS (DEVENGADO)', 14, 65);
+      
+      const incomeData = [
+        ['Concepto', 'Detalle/Horas', 'Valor'],
+        ['Consulta y Horas Libres', `${(activeResults.hoursBreakdown.day + activeResults.hoursBreakdown.night + activeResults.hoursBreakdown.holidayDay + activeResults.hoursBreakdown.holidayNight + activeResults.hoursBreakdown.extraDay + activeResults.hoursBreakdown.extraNight + activeResults.hoursBreakdown.extraHolidayDay + activeResults.hoursBreakdown.extraHolidayNight).toFixed(1)}h Totales`, formatCurrency(activeResults.grossBreakdown.consultationBase)],
+        ['AVA / Virtual', `${(activeResults.avaBreakdown.day + activeResults.avaBreakdown.night + activeResults.avaBreakdown.holidayDay + activeResults.avaBreakdown.holidayNight + activeResults.avaBreakdown.extraDay + activeResults.avaBreakdown.extraNight + activeResults.avaBreakdown.extraHolidayDay + activeResults.avaBreakdown.extraHolidayNight).toFixed(1)}h Totales`, formatCurrency(activeResults.grossBreakdown.ava)],
+        ['Productividad (Pacientes)', `${activeResults.totalMonthlyPatients} Pacientes/Unidades`, formatCurrency(activeResults.grossBreakdown.service)],
+        ['SUBTOTAL BRUTO', '', formatCurrency(activeResults.gross)],
+      ];
 
-    doc.save(`Extracto_${periodName.replace(/\s+/g, '_')}.pdf`);
+      autoTable(doc, {
+        startY: 68,
+        head: [incomeData[0]],
+        body: incomeData.slice(1, 4),
+        foot: [incomeData[4]],
+        theme: 'grid',
+        headStyles: { fillColor: [15, 23, 42], textColor: 255 },
+        footStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold' },
+        columnStyles: { 2: { halign: 'right' } }
+      });
+
+      // 2. Discriminación de Horas
+      const nextY = (doc as any).lastAutoTable.finalY + 10;
+      doc.setFontSize(12);
+      doc.text('2. DISCRIMINACIÓN DE TURNOS Y VALORES', 14, nextY);
+      
+      const hourData = [
+        ['Tipo / Categoría', 'Diurnas', 'Nocturnas', 'Festivas Diu', 'Festivas Noc', 'Totales'],
+        ['Horas Consulta', activeResults.hoursBreakdown.day.toFixed(1), activeResults.hoursBreakdown.night.toFixed(1), activeResults.hoursBreakdown.holidayDay.toFixed(1), activeResults.hoursBreakdown.holidayNight.toFixed(1), (activeResults.hoursBreakdown.day + activeResults.hoursBreakdown.night + activeResults.hoursBreakdown.holidayDay + activeResults.hoursBreakdown.holidayNight).toFixed(1)],
+        ['Valor Consulta', formatCurrency(activeResults.hoursValues.day), formatCurrency(activeResults.hoursValues.night), formatCurrency(activeResults.hoursValues.holidayDay), formatCurrency(activeResults.hoursValues.holidayNight), formatCurrency(activeResults.grossBreakdown.consultationBase)],
+        ['Horas AVA / Virt', activeResults.avaBreakdown.day.toFixed(1), activeResults.avaBreakdown.night.toFixed(1), activeResults.avaBreakdown.holidayDay.toFixed(1), activeResults.avaBreakdown.holidayNight.toFixed(1), (activeResults.avaBreakdown.day + activeResults.avaBreakdown.night + activeResults.avaBreakdown.holidayDay + activeResults.avaBreakdown.holidayNight).toFixed(1)],
+        ['Valor AVA / Virt', formatCurrency(activeResults.avaValues.day), formatCurrency(activeResults.avaValues.night), formatCurrency(activeResults.avaValues.holidayDay), formatCurrency(activeResults.avaValues.holidayNight), formatCurrency(activeResults.grossBreakdown.ava)],
+        ['Uni. Pacientes', activeResults.patientsBreakdown.day, activeResults.patientsBreakdown.night, activeResults.patientsBreakdown.holidayDay, activeResults.patientsBreakdown.holidayNight, activeResults.totalMonthlyPatients],
+        ['Valor Pacientes', formatCurrency(activeResults.patientsValues.day), formatCurrency(activeResults.patientsValues.night), formatCurrency(activeResults.patientsValues.holidayDay), formatCurrency(activeResults.patientsValues.holidayNight), formatCurrency(activeResults.grossBreakdown.service)],
+      ];
+
+      autoTable(doc, {
+        startY: nextY + 3,
+        head: [hourData[0]],
+        body: hourData.slice(1),
+        theme: 'grid',
+        headStyles: { fillColor: [51, 65, 85] },
+        styles: { fontSize: 7, halign: 'center' },
+        columnStyles: { 0: { halign: 'left', fontStyle: 'bold' } }
+      });
+
+      // Extra Hours Table
+      const extraY = (doc as any).lastAutoTable.finalY + 10;
+      doc.text('ANEXO: HORAS EXTRAS CALIFICADAS', 14, extraY);
+      const extraData = [
+        ['Categoría', 'Extra Diu', 'Extra Noc', 'Extra F-Diu', 'Extra F-Noc', 'Total'],
+        ['Horas Consulta', activeResults.hoursBreakdown.extraDay.toFixed(1), activeResults.hoursBreakdown.extraNight.toFixed(1), activeResults.hoursBreakdown.extraHolidayDay.toFixed(1), activeResults.hoursBreakdown.extraHolidayNight.toFixed(1), (activeResults.hoursBreakdown.extraDay + activeResults.hoursBreakdown.extraNight + activeResults.hoursBreakdown.extraHolidayDay + activeResults.hoursBreakdown.extraHolidayNight).toFixed(1)],
+        ['Valor Consulta', formatCurrency(activeResults.hoursValues.extraDay), formatCurrency(activeResults.hoursValues.extraNight), formatCurrency(activeResults.hoursValues.extraHolidayDay), formatCurrency(activeResults.hoursValues.extraHolidayNight), formatCurrency(activeResults.hoursValues.extraDay + activeResults.hoursValues.extraNight + activeResults.hoursValues.extraHolidayDay + activeResults.hoursValues.extraHolidayNight)],
+        ['Horas AVA/Virt', activeResults.avaBreakdown.extraDay.toFixed(1), activeResults.avaBreakdown.extraNight.toFixed(1), activeResults.avaBreakdown.extraHolidayDay.toFixed(1), activeResults.avaBreakdown.extraHolidayNight.toFixed(1), (activeResults.avaBreakdown.extraDay + activeResults.avaBreakdown.extraNight + activeResults.avaBreakdown.extraHolidayDay + activeResults.avaBreakdown.extraHolidayNight).toFixed(1)],
+        ['Valor AVA/Virt', formatCurrency(activeResults.avaValues.extraDay), formatCurrency(activeResults.avaValues.extraNight), formatCurrency(activeResults.avaValues.extraHolidayDay), formatCurrency(activeResults.avaValues.extraHolidayNight), formatCurrency(activeResults.avaValues.extraDay + activeResults.avaValues.extraNight + activeResults.avaValues.extraHolidayDay + activeResults.avaValues.extraHolidayNight)],
+      ];
+      autoTable(doc, {
+        startY: extraY + 3,
+        head: [extraData[0]],
+        body: extraData.slice(1),
+        theme: 'grid',
+        headStyles: { fillColor: [30, 41, 59] },
+        styles: { fontSize: 7, halign: 'center' },
+        columnStyles: { 0: { halign: 'left', fontStyle: 'bold' } }
+      });
+
+      // 3. Deducciones
+      const dedY = (doc as any).lastAutoTable.finalY + 10;
+      doc.setFontSize(12);
+      doc.text('3. DEDUCCIONES LEGALES', 14, dedY);
+      
+      const deductionData = [
+        ['Concepto', 'Base / Porcentaje', 'Valor'],
+        ['Aporte Salud', `4% de ${formatCurrency(activeResults.ibc)}`, `-${formatCurrency(activeResults.taxBreakdown.health)}`],
+        ['Aporte Pensión', `4% de ${formatCurrency(activeResults.ibc)}`, `-${formatCurrency(activeResults.taxBreakdown.pension)}`],
+        ['Fondo Solidaridad', activeResults.taxBreakdown.fsp > 0 ? 'Aplicado' : 'N/A', `-${formatCurrency(activeResults.taxBreakdown.fsp)}`],
+        ['Retefuente', rates.payroll.useManualRetefuente ? `${rates.payroll.manualRetefuentePct}%` : 'Tabla Art. 383', `-${formatCurrency(activeResults.taxBreakdown.retefuente)}`],
+        ['Otras Deducciones', 'Manuales', `-${formatCurrency(activeResults.taxBreakdown.additionalDeductions)}`],
+        ['TOTAL DEDUCCIONES', '', `-${formatCurrency(activeResults.totalDeductions)}`],
+      ];
+
+      autoTable(doc, {
+        startY: dedY + 3,
+        head: [deductionData[0]],
+        body: deductionData.slice(1, 6),
+        foot: [deductionData[6]],
+        theme: 'grid',
+        headStyles: { fillColor: [153, 27, 27] },
+        footStyles: { fillColor: [254, 242, 242], textColor: [153, 27, 27] },
+        columnStyles: { 2: { halign: 'right' } }
+      });
+
+      // 4. Beneficios Sociales
+      const benY = (doc as any).lastAutoTable.finalY + 10;
+      doc.text(`4. PRESTACIONES SOCIALES (SEMESTRE ${semester})`, 14, benY);
+      
+      const benefitData = [
+        ['Concepto', 'Descripción', 'Valor Acumulado'],
+        [`Prima de Servicios S${semester}`, `Cálculo proporcional mensual`, formatCurrency(activeResults.primaProporcional)],
+        ['Cesantías', 'Ahorro prestacional', formatCurrency(activeResults.cesantiasProporcional)],
+        ['Intereses Cesantías', '12% anual (1% mensual)', formatCurrency(activeResults.interesesCesantias)],
+        ['Vacaciones', 'Descanso remunerado', formatCurrency(activeResults.vacacionesProporcional)],
+        ['TOTAL PATRIMONIAL ACUMULADO', '', formatCurrency(activeResults.primaProporcional + activeResults.cesantiasProporcional + activeResults.interesesCesantias + activeResults.vacacionesProporcional)],
+      ];
+
+      autoTable(doc, {
+        startY: benY + 3,
+        head: [benefitData[0]],
+        body: benefitData.slice(1, 5),
+        foot: [benefitData[5]],
+        theme: 'grid',
+        headStyles: { fillColor: [30, 58, 138] },
+        footStyles: { fillColor: [238, 242, 255], textColor: [30, 58, 138] },
+        columnStyles: { 2: { halign: 'right' } }
+      });
+
+      // Final Net
+      const netTotalY = (doc as any).lastAutoTable.finalY + 15;
+      doc.setFillColor(15, 23, 42);
+      doc.rect(14, netTotalY, 182, 20, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(14);
+      doc.text('TOTAL NETO A RECIBIR (CAJA):', 20, netTotalY + 13);
+      doc.setFontSize(18);
+      doc.text(formatCurrency(activeResults.netCash), 190, netTotalY + 13, { align: 'right' });
+
+      // 5. Listado Detallado de Turnos
+      doc.addPage();
+      doc.setTextColor(15, 23, 42);
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text('5. ANEXO: LISTADO DETALLADO DE TURNOS', 14, 20);
+      
+      const detailedRecords = baseRecords
+        .filter(r => useDraft || r.isDefinitive)
+        .map(r => {
+          const isAVAMain = r.isAVAShift || r.isVirtualShift || (Object.values(r.ava || {}).some(v => (v as number) > 0) && Object.values(r.hours || {}).every(v => v === 0));
+          const dist = activeResults.recordDistributions[r.id];
+          if (!dist) return [r.date, `${r.startTime}-${r.endTime}`, '-', '0', '0', '$0'];
+
+          const val = calculateShiftValue({ ...r, isAVAShift: isAVAMain }, results.calculationRates, dist);
+          const totalHours = (dist.ord.day || 0) + (dist.ord.night || 0) + (dist.ord.holidayDay || 0) + (dist.ord.holidayNight || 0) +
+                             (dist.extra.day || 0) + (dist.extra.night || 0) + (dist.extra.holidayDay || 0) + (dist.extra.holidayNight || 0);
+          
+          let patientDisplay = '0';
+          if (r.applyPatients) {
+            patientDisplay = (r.patients.day + r.patients.night + r.patients.holidayDay + r.patients.holidayNight).toString();
+          } else {
+            const extraType = r.extraHoursType || (isAVAMain ? 'avaVirtual' : 'consultation');
+            if (!isAVAMain) {
+               patientDisplay = (dist.ord.day + dist.ord.night + dist.ord.holidayDay + dist.ord.holidayNight + (extraType === 'consultation' ? (dist.extra.day + dist.extra.night + dist.extra.holidayDay + dist.extra.holidayNight) : 0)).toFixed(1) + 'h';
+            }
+          }
+
+          return [
+            r.date,
+            `${r.startTime}-${r.endTime}`,
+            isAVAMain ? 'AVA/Virt' : 'Consul.',
+            totalHours.toFixed(1),
+            patientDisplay,
+            formatCurrency(val.base + val.service + val.avaVirtual),
+            r.isDefinitive ? 'Def' : 'Proj'
+          ];
+        });
+
+      autoTable(doc, {
+        startY: 25,
+        head: [['Fecha', 'Horario', 'Tipo', 'Hrs', 'Pac/Hrs', 'Bruto', 'St']],
+        body: detailedRecords,
+        theme: 'striped',
+        styles: { fontSize: 7 },
+        headStyles: { fillColor: [51, 65, 85] }
+      });
+
+      doc.save(`${useDraft ? 'Borrador' : 'Extracto'}_${periodName.replace(/\s+/g, '_')}.pdf`);
+      showToast(useDraft ? "Borrador PDF generado con éxito" : "Extracto PDF generado con éxito", "success");
+    } catch (error) {
+      console.error("PDF Error:", error);
+      showToast("Error al generar el PDF. Verifica la consola.", "error");
+    }
   };
 
   const exportToCSV = () => {
@@ -2786,31 +2885,6 @@ function MainApp() {
   };
 
   // --- Persistence Actions ---
-  const saveCurrentCalculation = () => {
-    const baseRecords = viewingArchive ? viewingArchive.records : records;
-    if (!calcName.trim()) {
-      showToast('Por favor, ingresa un nombre para guardar el extracto.', 'error');
-      return;
-    }
-    if (baseRecords.length === 0) {
-      showToast('No hay turnos para guardar.', 'error');
-      return;
-    }
-
-    const newSaved: SavedCalculation = {
-      id: crypto.randomUUID(),
-      name: calcName.trim(),
-      timestamp: new Date().toLocaleString(),
-      records: [...baseRecords],
-      rates: { ...rates },
-      additionalDeductions: additionalDeductions
-    };
-
-    setSavedCalculations([newSaved, ...savedCalculations]);
-    setCalcName('');
-    showToast('Extracto guardado con éxito.');
-  };
-
   const loadCalculation = (saved: SavedCalculation) => {
     setViewingArchive({ ...saved });
     setRates(saved.rates);
@@ -3545,8 +3619,8 @@ function MainApp() {
                                 holidayNight: Number((base * (1 + s.holidayNight)).toFixed(2)),
                                 extraDay: Number((base * (1 + s.extraDay)).toFixed(2)),
                                 extraNight: Number((base * (1 + s.extraNight)).toFixed(2)),
-                                extraHolidayDay: Number((base * (1 + s.extraDay)).toFixed(2)),
-                                extraHolidayNight: Number((base * (1 + s.extraNight)).toFixed(2)),
+                                extraHolidayDay: Number((base * (1 + s.extraHolidayDay)).toFixed(2)),
+                                extraHolidayNight: Number((base * (1 + s.extraHolidayNight)).toFixed(2)),
                               });
 
                               setRates({
@@ -4525,7 +4599,10 @@ function MainApp() {
                       <input 
                         type="date" 
                         value={shift.date || ''}
-                        onChange={(e) => setShift({ ...shift, date: e.target.value })}
+                        onChange={(e) => {
+                          setShift({ ...shift, date: e.target.value });
+                          setFormTouched(true);
+                        }}
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                       />
                   </div>
@@ -4533,7 +4610,10 @@ function MainApp() {
                     <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Trisemana (Periodo)</label>
                     <select 
                       value={manualTrisemanaId || ""}
-                      onChange={(e) => setManualTrisemanaId(e.target.value || null)}
+                      onChange={(e) => {
+                        setManualTrisemanaId(e.target.value || null);
+                        setFormTouched(true);
+                      }}
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-amber-500 outline-none transition-all font-bold text-slate-700"
                     >
                       <option value="">Auto-detectar por fecha</option>
@@ -4565,14 +4645,20 @@ function MainApp() {
                   <input 
                     type="time" 
                     value={shift.startTime}
-                    onChange={(e) => setShift({ ...shift, startTime: e.target.value })}
+                    onChange={(e) => {
+                      setShift({ ...shift, startTime: e.target.value });
+                      setFormTouched(true);
+                    }}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                   />
                   <label className="flex items-center gap-2 cursor-pointer group">
                     <input 
                       type="checkbox" 
                       checked={shift.isHolidayStart}
-                      onChange={(e) => setShift({ ...shift, isHolidayStart: e.target.checked })}
+                      onChange={(e) => {
+                        setShift({ ...shift, isHolidayStart: e.target.checked });
+                        setFormTouched(true);
+                      }}
                       className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                     />
                     <span className="text-xs text-slate-600 group-hover:text-slate-900 transition-colors">¿Inicio en Festivo?</span>
@@ -4584,14 +4670,20 @@ function MainApp() {
                   <input 
                     type="time" 
                     value={shift.endTime}
-                    onChange={(e) => setShift({ ...shift, endTime: e.target.value })}
+                    onChange={(e) => {
+                      setShift({ ...shift, endTime: e.target.value });
+                      setFormTouched(true);
+                    }}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                   />
                   <label className="flex items-center gap-2 cursor-pointer group">
                     <input 
                       type="checkbox" 
                       checked={shift.isHolidayEnd}
-                      onChange={(e) => setShift({ ...shift, isHolidayEnd: e.target.checked })}
+                      onChange={(e) => {
+                        setShift({ ...shift, isHolidayEnd: e.target.checked });
+                        setFormTouched(true);
+                      }}
                       className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                     />
                     <span className="text-xs text-slate-600 group-hover:text-slate-900 transition-colors">¿Fin en Festivo?</span>
@@ -4600,7 +4692,10 @@ function MainApp() {
                     <input 
                       type="checkbox" 
                       checked={shift.isAdditionalShift}
-                      onChange={(e) => setShift({ ...shift, isAdditionalShift: e.target.checked })}
+                      onChange={(e) => {
+                        setShift({ ...shift, isAdditionalShift: e.target.checked });
+                        setFormTouched(true);
+                      }}
                       className="w-4 h-4 rounded border-amber-300 text-amber-600 focus:ring-amber-500"
                     />
                     <span className="text-xs font-bold text-amber-600 group-hover:text-amber-700 transition-colors uppercase">Turno Adicional (Amarillo)</span>
@@ -4623,6 +4718,7 @@ function MainApp() {
                       <button
                         key={type.id}
                         onClick={() => {
+                          setFormTouched(true);
                           setShift({ 
                             ...shift, 
                             isAVAShift: type.id === 'avaVirtual',
@@ -4683,10 +4779,13 @@ function MainApp() {
                           step="0.5"
                           disabled={shift.isAVAShift}
                           value={quantities.hours[item.key as keyof Quantities['hours']] || 0}
-                          onChange={(e) => setQuantities({
-                            ...quantities,
-                            hours: { ...quantities.hours, [item.key]: Number(e.target.value) }
-                          })}
+                          onChange={(e) => {
+                            setQuantities({
+                              ...quantities,
+                              hours: { ...quantities.hours, [item.key]: Number(e.target.value) }
+                            });
+                            setFormTouched(true);
+                          }}
                           className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono disabled:opacity-50"
                         />
                       </div>
@@ -4713,10 +4812,13 @@ function MainApp() {
                           type="number"
                           step="0.5"
                           value={quantities.ava[item.key as keyof Quantities['ava']] || 0}
-                          onChange={(e) => setQuantities({
-                            ...quantities,
-                            ava: { ...quantities.ava, [item.key]: Number(e.target.value) }
-                          })}
+                          onChange={(e) => {
+                            setQuantities({
+                              ...quantities,
+                              ava: { ...quantities.ava, [item.key]: Number(e.target.value) }
+                            });
+                            setFormTouched(true);
+                          }}
                           className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono"
                         />
                       </div>
@@ -4736,7 +4838,10 @@ function MainApp() {
                         <input 
                           type="checkbox" 
                           checked={autoCalculatePatients}
-                          onChange={(e) => setAutoCalculatePatients(e.target.checked)}
+                          onChange={(e) => {
+                            setAutoCalculatePatients(e.target.checked);
+                            setFormTouched(true);
+                          }}
                           className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                         />
                         <span className="text-[10px] font-bold text-slate-500 uppercase">Auto-calcular</span>
@@ -4748,6 +4853,7 @@ function MainApp() {
                           disabled={shift.isAVAShift}
                           onChange={(e) => {
                             const checked = e.target.checked;
+                            setFormTouched(true);
                             setQuantities(prev => ({ 
                               ...prev, 
                               applyPatients: checked,
@@ -4775,6 +4881,7 @@ function MainApp() {
                           value={quantities.patients[item.key as keyof Quantities['patients']] || 0}
                           onChange={(e) => {
                             setAutoCalculatePatients(false);
+                            setFormTouched(true);
                             setQuantities({
                               ...quantities,
                               patients: { ...quantities.patients, [item.key]: Number(e.target.value) }
@@ -5398,44 +5505,6 @@ function MainApp() {
             </div>
           </section>
 
-          {/* Save Calculation */}
-          {(viewingArchive ? viewingArchive.records : records).length > 0 && (
-            <section className="bg-indigo-50 p-6 rounded-3xl border border-indigo-100 flex flex-col md:flex-row items-center gap-4">
-              <div className="flex items-center gap-3 shrink-0">
-                <div className="bg-white p-2 rounded-xl shadow-sm">
-                  <Save className="text-indigo-600 w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-slate-800">Guardar Extracto</h3>
-                  <p className="text-[10px] text-slate-500 uppercase font-bold">Persiste tus datos localmente</p>
-                </div>
-              </div>
-              <div className="flex-1 w-full flex gap-2">
-                <input 
-                  type="text" 
-                  placeholder="Nombre del extracto (ej: Marzo 2026)"
-                  value={calcName}
-                  onChange={(e) => setCalcName(e.target.value)}
-                  className="flex-1 bg-white border border-indigo-200 rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                />
-                <button 
-                  onClick={saveCurrentCalculation}
-                  className="bg-indigo-600 text-white px-6 py-2 rounded-xl text-sm font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 flex items-center gap-2"
-                >
-                  <Save className="w-4 h-4" />
-                  Guardar
-                </button>
-                <button 
-                  onClick={exportToCSV}
-                  className="bg-emerald-600 text-white px-6 py-2 rounded-xl text-sm font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 flex items-center gap-2"
-                >
-                  <FileText className="w-4 h-4" />
-                  Exportar CSV
-                </button>
-              </div>
-            </section>
-          )}
-
           {/* Step 3.5: Projections and Totals */}
           <section className="space-y-6">
             <div className="flex items-center justify-between">
@@ -5459,7 +5528,7 @@ function MainApp() {
             <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-6">
               <p className="text-sm text-slate-500">Este resumen incluye tanto los registros definitivos como las proyecciones actuales.</p>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div className="grid grid-cols-1 gap-4">
                 <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 space-y-2">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 text-slate-600">
@@ -5759,29 +5828,17 @@ function MainApp() {
                   <div className="flex flex-col gap-3 w-full md:w-auto">
                     <button 
                       onClick={() => {
-                        setConfirmDialog({
-                          title: "¿Deseas generar el extracto del periodo?",
-                          message: "Esta acción organizará toda la información de la bitácora y la sección 3.5 en un documento oficial. Los valores serán idénticos a los ya conciliados.",
-                          confirmLabel: "Sí, Generar Extracto",
-                          onConfirm: () => {
-                            exportToPDF();
-                            showToast("Extracto generado correctamente", "success");
-                          }
-                        });
+                        if (results.definitive.gross === 0 && results.all.gross > 0) {
+                          showToast("Este extracto solo incluye turnos marcados como DEFINITIVOS. Usa 'PDF Borrador' para proyectar todo.", "info");
+                        }
+                        exportToPDF(false);
                       }}
                       className="w-full bg-indigo-500 hover:bg-indigo-400 text-white font-black py-4 px-8 rounded-2xl transition-all shadow-lg flex items-center justify-center gap-3 text-sm group"
                     >
                       <FileDown className="w-5 h-5 group-hover:-translate-y-1 transition-transform" />
-                      PROCEDER A GENERAR PDF
+                      GENERAR PDF DEFINITIVO
                     </button>
                     <div className="flex gap-2">
-                       <button 
-                        onClick={() => exportToPDF()}
-                        className="flex-1 bg-white/10 hover:bg-white/20 text-white font-bold py-3 px-4 rounded-xl transition-all flex items-center justify-center gap-2 text-xs"
-                      >
-                        <Printer className="w-4 h-4" />
-                        PDF / Imprimir
-                      </button>
                       <button 
                         onClick={() => exportToExcel()}
                         className="flex-1 bg-white/10 hover:bg-white/20 text-white font-bold py-3 px-4 rounded-xl transition-all flex items-center justify-center gap-2 text-xs"
@@ -5790,11 +5847,11 @@ function MainApp() {
                         Excel
                       </button>
                       <button 
-                        onClick={saveCurrentCalculation}
-                        className="flex-1 bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/30 font-bold py-3 px-4 rounded-xl transition-all flex items-center justify-center gap-2 text-xs"
+                        onClick={() => exportToPDF(true)}
+                        className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 px-4 rounded-xl transition-all flex items-center justify-center gap-2 text-xs border border-slate-600"
                       >
-                        <Save className="w-4 h-4" />
-                        Guardar Snapshot
+                        <FileDown className="w-4 h-4" />
+                        PDF Borrador
                       </button>
                       {activePeriod && selectedPeriodId === activePeriod.id && (
                         <button 
@@ -5806,7 +5863,7 @@ function MainApp() {
                           className="flex-1 bg-indigo-600 text-white font-bold py-3 px-4 rounded-xl hover:bg-indigo-700 transition-all flex items-center justify-center gap-2 text-xs shadow-lg"
                         >
                           <Archive className="w-4 h-4" />
-                          Finalizar y Archivar
+                          Archivar
                         </button>
                       )}
                     </div>

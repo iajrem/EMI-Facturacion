@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, deleteDoc, updateDoc, getDocFromServer, Timestamp, writeBatch } from 'firebase/firestore';
+import { initializeFirestore, collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, deleteDoc, updateDoc, getDocFromServer, Timestamp, writeBatch } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 // Initialize Firebase SDK
@@ -10,7 +10,13 @@ if (!firebaseConfig || !firebaseConfig.apiKey || firebaseConfig.apiKey.includes(
 }
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+// Use initializeFirestore instead of getFirestore to enable forceLongPolling
+// This fixes "RPC 'Listen' stream transport errored" which happens behind some proxies/firewalls
+export const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+}, firebaseConfig.firestoreDatabaseId);
+
 export const auth = getAuth(app);
 console.log("Firebase SDK: Auth and Firestore initialized");
 export const googleProvider = new GoogleAuthProvider();
