@@ -442,60 +442,61 @@ interface ShiftDistribution {
   extra: { day: number; night: number; holidayDay: number; holidayNight: number };
 }
 
-const calculateShiftValue = (record: ShiftRecord, rates: Rates, dist: any) => {
-  if (!dist) return { base: 0, service: 0, extraSurcharge: 0, avaVirtual: 0 };
-
+const calculateShiftValue = (record: ShiftRecord, rates: Rates) => {
   const r = normalizeRates(rates);
   const h = r.hourly;
   const a = r.ava;
   const p = r.patient;
 
+  const hours = record.hours || { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 };
+  const ava = record.ava || { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 };
+  const patients = record.patients || { day: 0, night: 0, holidayDay: 0, holidayNight: 0 };
+
   let basePart = 0;
   let servicePart = 0;
   let avaPart = 0;
 
-  const isMainAlt = record.isAVAShift || record.isVirtualShift;
-  const extraType = record.extraHoursType || (isMainAlt ? 'avaVirtual' : 'consultation');
-  const isExtraAlt = extraType === 'avaVirtual';
-
   // 1. Service Part
   if (record.applyPatients) {
-    if (!isMainAlt) {
-      servicePart = (record.patients.day * p.day) + 
-                    (record.patients.night * p.night) + 
-                    (record.patients.holidayDay * p.holidayDay) + 
-                    (record.patients.holidayNight * p.holidayNight);
-    }
+    servicePart = (patients.day * p.day) + 
+                  (patients.night * p.night) + 
+                  (patients.holidayDay * p.holidayDay) + 
+                  (patients.holidayNight * p.holidayNight);
   } else {
-    // Hourly service
-    const servDay = (isMainAlt ? 0 : dist.ord.day) + (isExtraAlt ? 0 : dist.extra.day);
-    const servNight = (isMainAlt ? 0 : dist.ord.night) + (isExtraAlt ? 0 : dist.extra.night);
-    const servHolD = (isMainAlt ? 0 : dist.ord.holidayDay) + (isExtraAlt ? 0 : dist.extra.holidayDay);
-    const servHolN = (isMainAlt ? 0 : dist.ord.holidayNight) + (isExtraAlt ? 0 : dist.extra.holidayNight);
-    servicePart = (servDay * p.day) + (servNight * p.night) + (servHolD * p.holidayDay) + (servHolN * p.holidayNight);
+    // Hourly service applies to Consultation hours and optionally AVA if specified
+    const isMainAlt = record.isAVAShift || record.isVirtualShift;
+    const extraType = record.extraHoursType || (isMainAlt ? 'avaVirtual' : 'consultation');
+    
+    // Hourly Productive (Consultation records or records marked as Hourly)
+    // We sum all Consultation hours (reg+extra) and AVA extras if they are Consultation type
+    const regConsTotal = hours.day + hours.night + hours.holidayDay + hours.holidayNight;
+    const extConsTotal = hours.extraDay + hours.extraNight + hours.extraHolidayDay + hours.extraHolidayNight;
+    
+    servicePart = ((hours.day + hours.extraDay) * p.day) + 
+                  ((hours.night + hours.extraNight) * p.night) + 
+                  ((hours.holidayDay + hours.extraHolidayDay) * p.holidayDay) + 
+                  ((hours.holidayNight + hours.extraHolidayNight) * p.holidayNight);
   }
 
   // 2. Base Part (Consultation)
-  basePart += (isMainAlt ? 0 : dist.ord.day) * h.day +
-              (isMainAlt ? 0 : dist.ord.night) * h.night +
-              (isMainAlt ? 0 : dist.ord.holidayDay) * h.holidayDay +
-              (isMainAlt ? 0 : dist.ord.holidayNight) * h.holidayNight;
-  
-  basePart += (isExtraAlt ? 0 : dist.extra.day) * h.extraDay +
-              (isExtraAlt ? 0 : dist.extra.night) * h.extraNight +
-              (isExtraAlt ? 0 : dist.extra.holidayDay) * h.extraHolidayDay +
-              (isExtraAlt ? 0 : dist.extra.holidayNight) * h.extraHolidayNight;
+  basePart = (hours.day * h.day) +
+             (hours.night * h.night) +
+             (hours.holidayDay * h.holidayDay) +
+             (hours.holidayNight * h.holidayNight) +
+             (hours.extraDay * h.extraDay) +
+             (hours.extraNight * h.extraNight) +
+             (hours.extraHolidayDay * h.extraHolidayDay) +
+             (hours.extraHolidayNight * h.extraHolidayNight);
 
   // 3. AVA Part
-  avaPart += (isMainAlt ? dist.ord.day : 0) * a.day +
-             (isMainAlt ? dist.ord.night : 0) * a.night +
-             (isMainAlt ? dist.ord.holidayDay : 0) * a.holidayDay +
-             (isMainAlt ? dist.ord.holidayNight : 0) * a.holidayNight;
-
-  avaPart += (isExtraAlt ? dist.extra.day : 0) * a.extraDay +
-             (isExtraAlt ? dist.extra.night : 0) * a.extraNight +
-             (isExtraAlt ? dist.extra.holidayDay : 0) * a.extraHolidayDay +
-             (isExtraAlt ? dist.extra.holidayNight : 0) * a.extraHolidayNight;
+  avaPart = (ava.day * a.day) +
+            (ava.night * a.night) +
+            (ava.holidayDay * a.holidayDay) +
+            (ava.holidayNight * a.holidayNight) +
+            (ava.extraDay * a.extraDay) +
+            (ava.extraNight * a.extraNight) +
+            (ava.extraHolidayDay * a.extraHolidayDay) +
+            (ava.extraHolidayNight * a.extraHolidayNight);
 
   return { base: basePart, service: servicePart, extraSurcharge: 0, avaVirtual: avaPart };
 };
@@ -692,56 +693,46 @@ const calculatePeriodTotals = (
       recordDistributions[record.id] = dist;
     }
 
-    const isAVAMain = record.isAVAShift || record.isVirtualShift || (Object.values(record.ava || {}).some(v => v > 0) && Object.values(record.hours || {}).every(v => v === 0));
-    
-    // Simple additive logic for breakdown
-    if (isAVAMain) {
-      avaVirtualBreakdown.day += dist.ord.day;
-      avaVirtualBreakdown.night += dist.ord.night;
-      avaVirtualBreakdown.holidayDay += dist.ord.holidayDay;
-      avaVirtualBreakdown.holidayNight += dist.ord.holidayNight;
+    // Use directly stored values for breakdown to honor manual edits
+    const hField = record.hours || { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 };
+    const aField = record.ava || { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 };
+    const pField = record.patients || { day: 0, night: 0, holidayDay: 0, holidayNight: 0 };
 
-      avaVirtualBreakdown.extraDay += dist.extra.day;
-      avaVirtualBreakdown.extraNight += dist.extra.night;
-      avaVirtualBreakdown.extraHolidayDay += dist.extra.holidayDay;
-      avaVirtualBreakdown.extraHolidayNight += dist.extra.holidayNight;
-    } else {
-      hoursBreakdown.day += dist.ord.day;
-      hoursBreakdown.night += dist.ord.night;
-      hoursBreakdown.holidayDay += dist.ord.holidayDay;
-      hoursBreakdown.holidayNight += dist.ord.holidayNight;
+    // Update breakdowns
+    hoursBreakdown.day += hField.day;
+    hoursBreakdown.night += hField.night;
+    hoursBreakdown.holidayDay += hField.holidayDay;
+    hoursBreakdown.holidayNight += hField.holidayNight;
+    hoursBreakdown.extraDay += hField.extraDay;
+    hoursBreakdown.extraNight += hField.extraNight;
+    hoursBreakdown.extraHolidayDay += hField.extraHolidayDay;
+    hoursBreakdown.extraHolidayNight += hField.extraHolidayNight;
 
-      hoursBreakdown.extraDay += dist.extra.day;
-      hoursBreakdown.extraNight += dist.extra.night;
-      hoursBreakdown.extraHolidayDay += dist.extra.holidayDay;
-      hoursBreakdown.extraHolidayNight += dist.extra.holidayNight;
+    avaVirtualBreakdown.day += aField.day;
+    avaVirtualBreakdown.night += aField.night;
+    avaVirtualBreakdown.holidayDay += aField.holidayDay;
+    avaVirtualBreakdown.holidayNight += aField.holidayNight;
+    avaVirtualBreakdown.extraDay += aField.extraDay;
+    avaVirtualBreakdown.extraNight += aField.extraNight;
+    avaVirtualBreakdown.extraHolidayDay += aField.extraHolidayDay;
+    avaVirtualBreakdown.extraHolidayNight += aField.extraHolidayNight;
+
+    // Patients Breakdown
+    patientsBreakdown.day += pField.day;
+    patientsBreakdown.night += pField.night;
+    patientsBreakdown.holidayDay += pField.holidayDay;
+    patientsBreakdown.holidayNight += pField.holidayNight;
+
+    // Add hourly productive service if applicable
+    if (!record.applyPatients) {
+      patientsBreakdown.day += hField.day + hField.extraDay;
+      patientsBreakdown.night += hField.night + hField.extraNight;
+      patientsBreakdown.holidayDay += hField.holidayDay + hField.extraHolidayDay;
+      patientsBreakdown.holidayNight += hField.holidayNight + hField.extraHolidayNight;
     }
 
-    // Patients / Service Breakdown (For UI detailed report)
-    if (record.applyPatients) {
-      patientsBreakdown.day += (record.patients?.day || 0);
-      patientsBreakdown.night += (record.patients?.night || 0);
-      patientsBreakdown.holidayDay += (record.patients?.holidayDay || 0);
-      patientsBreakdown.holidayNight += (record.patients?.holidayNight || 0);
-    } else {
-      // If it's per hour service, add the combined hours to the breakdown
-      const extraType = record.extraHoursType || (isAVAMain ? 'avaVirtual' : 'consultation');
-      if (!isAVAMain) {
-        patientsBreakdown.day += dist.ord.day + (extraType === 'consultation' ? dist.extra.day : 0);
-        patientsBreakdown.night += dist.ord.night + (extraType === 'consultation' ? dist.extra.night : 0);
-        patientsBreakdown.holidayDay += dist.ord.holidayDay + (extraType === 'consultation' ? dist.extra.holidayDay : 0);
-        patientsBreakdown.holidayNight += dist.ord.holidayNight + (extraType === 'consultation' ? dist.extra.holidayNight : 0);
-      } else if (extraType === 'consultation') {
-        // AVA shift but extras are Consultation
-        patientsBreakdown.day += dist.extra.day;
-        patientsBreakdown.night += dist.extra.night;
-        patientsBreakdown.holidayDay += dist.extra.holidayDay;
-        patientsBreakdown.holidayNight += dist.extra.holidayNight;
-      }
-    }
-
-    // --- Additive Calculation Logic ---
-    const shiftValue = calculateShiftValue({ ...record, isAVAShift: isAVAMain }, rates, recordDistributions[record.id]);
+    // Calculation using the refined function
+    const shiftValue = calculateShiftValue(record, rates);
     components.base += shiftValue.base;
     components.service += shiftValue.service;
     components.extraSurcharge += shiftValue.extraSurcharge;
@@ -749,8 +740,8 @@ const calculatePeriodTotals = (
 
     const rDate = new Date(record.date + 'T00:00:00');
     const monthName = rDate.toLocaleString('es-ES', { month: 'long', year: 'numeric' });
-    const recordTotalHours = (dist.ord.day + dist.ord.night + dist.ord.holidayDay + dist.ord.holidayNight) +
-                             (dist.extra.day + dist.extra.night + dist.extra.holidayDay + dist.extra.holidayNight);
+    const recordTotalHours = (hField.day + hField.night + hField.holidayDay + hField.holidayNight + hField.extraDay + hField.extraNight + hField.extraHolidayDay + hField.extraHolidayNight) +
+                             (aField.day + aField.night + aField.holidayDay + aField.holidayNight + aField.extraDay + aField.extraNight + aField.extraHolidayDay + aField.extraHolidayNight);
     
     monthlyHours[monthName] = (monthlyHours[monthName] || 0) + recordTotalHours;
   });
@@ -1601,7 +1592,7 @@ function MainApp() {
         const val = calculateShiftValue({
           ...r,
           isAVAShift: isAVAMain
-        }, results.calculationRates, dist);
+        }, results.calculationRates);
         
         const recordGross = val.base + val.service + val.extraSurcharge + val.avaVirtual;
         totalGrossVerified += recordGross;
@@ -2587,7 +2578,7 @@ function MainApp() {
     const turnsData = baseRecords.map(r => {
       const isAVAMain = r.isAVAShift || r.isVirtualShift || (Object.values(r.ava || {}).some(v => (v as number) > 0) && Object.values(r.hours || {}).every(v => v === 0));
       const dist = results.all.recordDistributions[r.id];
-      const val = calculateShiftValue({ ...r, isAVAShift: isAVAMain }, results.calculationRates, dist);
+      const val = calculateShiftValue({ ...r, isAVAShift: isAVAMain }, results.calculationRates);
       const totalHours = (dist?.ord.day || 0) + (dist?.ord.night || 0) + (dist?.ord.holidayDay || 0) + (dist?.ord.holidayNight || 0) +
                          (dist?.extra.day || 0) + (dist?.extra.night || 0) + (dist?.extra.holidayDay || 0) + (dist?.extra.holidayNight || 0);
       return [
@@ -2785,21 +2776,19 @@ function MainApp() {
         .filter(r => useDraft || r.isDefinitive)
         .map(r => {
           const isAVAMain = r.isAVAShift || r.isVirtualShift || (Object.values(r.ava || {}).some(v => (v as number) > 0) && Object.values(r.hours || {}).every(v => v === 0));
-          const dist = activeResults.recordDistributions[r.id];
-          if (!dist) return [r.date, `${r.startTime}-${r.endTime}`, '-', '0', '0', '$0'];
-
-          const val = calculateShiftValue({ ...r, isAVAShift: isAVAMain }, results.calculationRates, dist);
-          const totalHours = (dist.ord.day || 0) + (dist.ord.night || 0) + (dist.ord.holidayDay || 0) + (dist.ord.holidayNight || 0) +
-                             (dist.extra.day || 0) + (dist.extra.night || 0) + (dist.extra.holidayDay || 0) + (dist.extra.holidayNight || 0);
+          const val = calculateShiftValue(r, results.calculationRates);
+          
+          const h = r.hours || { day:0, night:0, holidayDay:0, holidayNight:0, extraDay:0, extraNight:0, extraHolidayDay:0, extraHolidayNight:0 };
+          const a = r.ava || { day:0, night:0, holidayDay:0, holidayNight:0, extraDay:0, extraNight:0, extraHolidayDay:0, extraHolidayNight:0 };
+          
+          const totalHours = (h.day + h.night + h.holidayDay + h.holidayNight + h.extraDay + h.extraNight + h.extraHolidayDay + h.extraHolidayNight) +
+                             (a.day + a.night + a.holidayDay + a.holidayNight + a.extraDay + a.extraNight + a.extraHolidayDay + a.extraHolidayNight);
           
           let patientDisplay = '0';
           if (r.applyPatients) {
-            patientDisplay = (r.patients.day + r.patients.night + r.patients.holidayDay + r.patients.holidayNight).toString();
+            patientDisplay = ((r.patients?.day || 0) + (r.patients?.night || 0) + (r.patients?.holidayDay || 0) + (r.patients?.holidayNight || 0)).toString();
           } else {
-            const extraType = r.extraHoursType || (isAVAMain ? 'avaVirtual' : 'consultation');
-            if (!isAVAMain) {
-               patientDisplay = (dist.ord.day + dist.ord.night + dist.ord.holidayDay + dist.ord.holidayNight + (extraType === 'consultation' ? (dist.extra.day + dist.extra.night + dist.extra.holidayDay + dist.extra.holidayNight) : 0)).toFixed(1) + 'h';
-            }
+            patientDisplay = (h.day + h.night + h.holidayDay + h.holidayNight + h.extraDay + h.extraNight + h.extraHolidayDay + h.extraHolidayNight).toFixed(1) + 'h';
           }
 
           return [
@@ -5226,46 +5215,32 @@ function MainApp() {
                             </td>
                             <td className="p-4 text-xs font-mono font-bold">
                               {(() => {
-                                const dist = results.all.recordDistributions[record.id];
-                                if (!dist) return null;
-
-                                const isAVAMain = record.isAVAShift || record.isVirtualShift || (Object.values(record.ava || {}).some(v => v > 0) && Object.values(record.hours || {}).every(v => v === 0));
-                                const extraType = record.extraHoursType || (isAVAMain ? 'avaVirtual' : 'consultation');
-
-                                const h = {
-                                  day: isAVAMain ? 0 : dist.ord.day,
-                                  night: isAVAMain ? 0 : dist.ord.night,
-                                  holidayDay: isAVAMain ? 0 : dist.ord.holidayDay,
-                                  holidayNight: isAVAMain ? 0 : dist.ord.holidayNight,
-                                  extraDay: extraType === 'consultation' ? dist.extra.day : 0,
-                                  extraNight: extraType === 'consultation' ? dist.extra.night : 0,
-                                  extraHolidayDay: extraType === 'consultation' ? dist.extra.holidayDay : 0,
-                                  extraHolidayNight: extraType === 'consultation' ? dist.extra.holidayNight : 0
-                                };
-
+                                const h = record.hours || { day:0, night:0, holidayDay:0, holidayNight:0, extraDay:0, extraNight:0, extraHolidayDay:0, extraHolidayNight:0 };
                                 const dayTotal = (h.day + h.night + h.holidayDay + h.holidayNight) + 
                                               (h.extraDay + h.extraNight + h.extraHolidayDay + h.extraHolidayNight);
+
+                                if (dayTotal === 0) return <span className="text-slate-300 italic font-normal">0.0h</span>;
 
                                 return (
                                   <div className="flex flex-col">
                                     <div className="mb-1">
                                       <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-1 py-0.5 rounded border border-slate-100">
-                                        DÍA: {dayTotal}h
+                                        DÍA: {dayTotal.toFixed(1)}h
                                       </span>
                                     </div>
                                     <div className="flex flex-wrap gap-x-2">
-                                      {h.day > 0 && <span className="text-amber-600 font-bold" title="Diurna">{h.day}D</span>}
-                                      {h.night > 0 && <span className="text-indigo-600 font-bold" title="Nocturna">{h.night}N</span>}
-                                      {h.holidayDay > 0 && <span className="text-rose-600 font-bold" title="Festiva Diurna">{h.holidayDay}FD</span>}
-                                      {h.holidayNight > 0 && <span className="text-purple-600 font-bold" title="Festiva Nocturna">{h.holidayNight}FN</span>}
+                                      {h.day > 0 && <span className="text-amber-600 font-bold" title="Diurna">{h.day.toFixed(1)}D</span>}
+                                      {h.night > 0 && <span className="text-indigo-600 font-bold" title="Nocturna">{h.night.toFixed(1)}N</span>}
+                                      {h.holidayDay > 0 && <span className="text-rose-600 font-bold" title="Festiva Diurna">{h.holidayDay.toFixed(1)}FD</span>}
+                                      {h.holidayNight > 0 && <span className="text-purple-600 font-bold" title="Festiva Nocturna">{h.holidayNight.toFixed(1)}FN</span>}
                                     </div>
                                     {(h.extraDay + h.extraNight + h.extraHolidayDay + h.extraHolidayNight) > 0 && (
                                       <div className="text-[9px] text-rose-500 mt-0.5 border-t border-rose-100 pt-0.5 flex flex-wrap gap-x-2">
                                         <span className="font-black italic text-rose-600">EXCED:</span>
-                                        {h.extraDay > 0 && <span>{h.extraDay}ED</span>}
-                                        {h.extraNight > 0 && <span>{h.extraNight}EN</span>}
-                                        {h.extraHolidayDay > 0 && <span>{h.extraHolidayDay}EFD</span>}
-                                        {h.extraHolidayNight > 0 && <span>{h.extraHolidayNight}EFN</span>}
+                                        {h.extraDay > 0 && <span>{h.extraDay.toFixed(1)}ED</span>}
+                                        {h.extraNight > 0 && <span>{h.extraNight.toFixed(1)}EN</span>}
+                                        {h.extraHolidayDay > 0 && <span>{h.extraHolidayDay.toFixed(1)}EFD</span>}
+                                        {h.extraHolidayNight > 0 && <span>{h.extraHolidayNight.toFixed(1)}EFN</span>}
                                       </div>
                                     )}
                                   </div>
@@ -5274,50 +5249,36 @@ function MainApp() {
                             </td>
                             <td className="p-4 text-xs font-mono font-bold">
                               {(() => {
-                                const dist = results.all.recordDistributions[record.id];
-                                if (!dist) return null;
+                                const a = record.ava || { day:0, night:0, holidayDay:0, holidayNight:0, extraDay:0, extraNight:0, extraHolidayDay:0, extraHolidayNight:0 };
+                                const dayTotalAVA = (a.day + a.night + a.holidayDay + a.holidayNight) + 
+                                              (a.extraDay + a.extraNight + a.extraHolidayDay + a.extraHolidayNight);
 
-                                const isAVAMain = record.isAVAShift || record.isVirtualShift || (Object.values(record.ava || {}).some(v => v > 0) && Object.values(record.hours || {}).every(v => v === 0));
-                                const extraType = record.extraHoursType || (isAVAMain ? 'avaVirtual' : 'consultation');
+                                if (dayTotalAVA === 0) return <span className="text-slate-300 italic font-normal">0.0h</span>;
 
-                                const a = {
-                                  day: isAVAMain ? dist.ord.day : 0,
-                                  night: isAVAMain ? dist.ord.night : 0,
-                                  holidayDay: isAVAMain ? dist.ord.holidayDay : 0,
-                                  holidayNight: isAVAMain ? dist.ord.holidayNight : 0,
-                                  extraDay: extraType === 'avaVirtual' ? dist.extra.day : 0,
-                                  extraNight: extraType === 'avaVirtual' ? dist.extra.night : 0,
-                                  extraHolidayDay: extraType === 'avaVirtual' ? dist.extra.holidayDay : 0,
-                                  extraHolidayNight: extraType === 'avaVirtual' ? dist.extra.holidayNight : 0
-                                };
-
-                                 const dayTotalAVA = (a.day + a.night + a.holidayDay + a.holidayNight) + 
-                                               (a.extraDay + a.extraNight + a.extraHolidayDay + a.extraHolidayNight);
-
-                                 return (
-                                   <div className="flex flex-col">
-                                     <div className="mb-1">
-                                       <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-1 py-0.5 rounded border border-slate-100">
-                                         DÍA: {dayTotalAVA}h
-                                       </span>
-                                     </div>
-                                     <div className="flex flex-wrap gap-x-2">
-                                       {a.day > 0 && <span className="text-amber-600 font-bold" title="AVA/Virt Diurna">{a.day}D</span>}
-                                       {a.night > 0 && <span className="text-indigo-600 font-bold" title="AVA/Virt Nocturna">{a.night}N</span>}
-                                       {a.holidayDay > 0 && <span className="text-rose-600 font-bold" title="AVA/Virt Festiva Diurna">{a.holidayDay}FD</span>}
-                                       {a.holidayNight > 0 && <span className="text-purple-600 font-bold" title="AVA/Virt Festiva Nocturna">{a.holidayNight}FN</span>}
-                                     </div>
-                                     {(a.extraDay + a.extraNight + a.extraHolidayDay + a.extraHolidayNight) > 0 && (
-                                       <div className="text-[9px] text-rose-500 mt-0.5 border-t border-rose-100 pt-0.5 flex flex-wrap gap-x-2">
-                                         <span className="font-black italic text-rose-600">EXCED:</span>
-                                         {a.extraDay > 0 && <span>{a.extraDay}ED</span>}
-                                         {a.extraNight > 0 && <span>{a.extraNight}EN</span>}
-                                         {a.extraHolidayDay > 0 && <span>{a.extraHolidayDay}EFD</span>}
-                                         {a.extraHolidayNight > 0 && <span>{a.extraHolidayNight}EFN</span>}
-                                       </div>
-                                     )}
-                                   </div>
-                                 );
+                                return (
+                                  <div className="flex flex-col">
+                                    <div className="mb-1">
+                                      <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-1 py-0.5 rounded border border-slate-100">
+                                        DÍA: {dayTotalAVA.toFixed(1)}h
+                                      </span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-x-2">
+                                      {a.day > 0 && <span className="text-amber-600 font-bold" title="AVA/Virt Diurna">{a.day.toFixed(1)}D</span>}
+                                      {a.night > 0 && <span className="text-indigo-600 font-bold" title="AVA/Virt Nocturna">{a.night.toFixed(1)}N</span>}
+                                      {a.holidayDay > 0 && <span className="text-rose-600 font-bold" title="AVA/Virt Festiva Diurna">{a.holidayDay.toFixed(1)}FD</span>}
+                                      {a.holidayNight > 0 && <span className="text-purple-600 font-bold" title="AVA/Virt Festiva Nocturna">{a.holidayNight.toFixed(1)}FN</span>}
+                                    </div>
+                                    {(a.extraDay + a.extraNight + a.extraHolidayDay + a.extraHolidayNight) > 0 && (
+                                      <div className="text-[9px] text-rose-500 mt-0.5 border-t border-rose-100 pt-0.5 flex flex-wrap gap-x-2">
+                                        <span className="font-black italic text-rose-600">EXCED:</span>
+                                        {a.extraDay > 0 && <span>{a.extraDay.toFixed(1)}ED</span>}
+                                        {a.extraNight > 0 && <span>{a.extraNight.toFixed(1)}EN</span>}
+                                        {a.extraHolidayDay > 0 && <span>{a.extraHolidayDay.toFixed(1)}EFD</span>}
+                                        {a.extraHolidayNight > 0 && <span>{a.extraHolidayNight.toFixed(1)}EFN</span>}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
                               })()}
                             </td>
                             <td className="p-4 text-xs font-mono font-bold">
@@ -5337,16 +5298,16 @@ function MainApp() {
                             </td>
                             <td className="p-4 text-xs font-mono">
                               {(() => {
-                                const dist = results.all.recordDistributions[record.id];
-                                const isAVAMain = record.isAVAShift || record.isVirtualShift || (Object.values(record.ava || {}).some(v => v > 0) && Object.values(record.hours || {}).every(v => v === 0));
-                                const shiftValue = calculateShiftValue({ ...record, isAVAShift: isAVAMain }, results.calculationRates, dist);
+                                const shiftValue = calculateShiftValue(record, results.calculationRates);
                                 const grossShift = shiftValue.base + shiftValue.service + shiftValue.extraSurcharge + shiftValue.avaVirtual;
                                 const netShift = grossShift * (1 - results.all.effectiveDeductionRate);
                                 
                                 return (
                                   <div className="flex flex-col">
-                                    <span className="font-bold text-slate-700">${Math.round(grossShift).toLocaleString()}</span>
-                                    <span className="text-[10px] text-slate-400">Neto: ${Math.round(netShift).toLocaleString()}</span>
+                                    <span className="font-bold text-slate-700 font-mono tracking-tight text-sm">${Math.round(grossShift).toLocaleString()}</span>
+                                    <div className="flex gap-1.5 mt-0.5">
+                                      <span className="text-[9px] text-slate-400">Net: ${Math.round(netShift).toLocaleString()}</span>
+                                    </div>
                                   </div>
                                 );
                               })()}
@@ -5449,8 +5410,12 @@ function MainApp() {
                               <span className="text-[8px] font-bold text-slate-400 uppercase">FN</span>
                               <span className="text-xs font-mono font-bold text-purple-600">{results.all.avaBreakdown.holidayNight.toFixed(1)}h</span>
                             </div>
-                            <div className="col-span-2 mt-1 pt-1 border-t border-slate-100 flex justify-between">
-                              <span className="text-[8px] font-bold text-violet-700 uppercase">Total:</span>
+                            <div className="col-span-2 mt-1 pt-1 border-t border-slate-100 flex justify-between gap-1 items-center">
+                              <span className="text-[8px] font-bold text-violet-700 uppercase">Ext:</span>
+                              <span className="text-[9px] font-mono font-black text-rose-500 whitespace-nowrap">
+                                {(results.all.avaBreakdown.extraDay + results.all.avaBreakdown.extraNight + results.all.avaBreakdown.extraHolidayDay + results.all.avaBreakdown.extraHolidayNight).toFixed(1)}h
+                              </span>
+                              <span className="text-[8px] font-bold text-violet-700 uppercase ml-1">Tot:</span>
                               <span className="text-[10px] font-mono font-black text-violet-700">{results.all.totalMonthlyAVA.toFixed(1)}h</span>
                             </div>
                           </div>
