@@ -5885,71 +5885,79 @@ function MainApp() {
                         <div className="w-6 h-0.5 bg-indigo-500" />
                         Matriz de Auditoría de Horas y Productividad (Vista Lineal)
                      </h4>
-                     <div className="overflow-x-auto pb-4">
-                        <div className="min-w-[800px] border-2 border-slate-800 rounded-3xl overflow-hidden bg-white shadow-xl">
+                     <div className="overflow-x-auto pb-6">
+                        <div className="min-w-[1000px] border-2 border-slate-800 rounded-3xl overflow-hidden bg-white shadow-xl">
                            <table className="w-full text-[10px] border-collapse">
                               <thead>
-                                 <tr className="bg-slate-900 text-white font-black uppercase text-center">
-                                    <th className="p-3 border-r border-slate-700">Categoría</th>
-                                    <th className="p-3 border-r border-slate-700 bg-amber-500/10">DIU</th>
-                                    <th className="p-3 border-r border-slate-700 bg-indigo-500/10">NOC</th>
-                                    <th className="p-3 border-r border-slate-700 bg-rose-500/10">F-DIU</th>
-                                    <th className="p-3 border-r border-slate-700 bg-purple-500/10">F-NOC</th>
-                                    <th className="p-3 border-r border-slate-700 bg-rose-500">Extras</th>
-                                    <th className="p-3 bg-slate-800">Total H</th>
+                                 <tr className="bg-slate-900 text-white font-black uppercase text-center text-[9px] divide-x divide-slate-700">
+                                    <th className="p-3">Categoría</th>
+                                    <th className="p-2 bg-amber-500/10">DIU</th>
+                                    <th className="p-2 bg-indigo-500/10">NOC</th>
+                                    <th className="p-2 bg-rose-500/10 text-rose-300">FD</th>
+                                    <th className="p-2 bg-purple-500/10 text-purple-300">FN</th>
+                                    <th className="p-2 bg-rose-700 text-white">ED</th>
+                                    <th className="p-2 bg-rose-700 text-white">EN</th>
+                                    <th className="p-2 bg-rose-700 text-white">EFD</th>
+                                    <th className="p-2 bg-rose-700 text-white">EFN</th>
+                                    <th className="p-3 bg-slate-800 whitespace-nowrap">Total H</th>
                                  </tr>
                               </thead>
                               <tbody className="font-mono divide-y divide-slate-200">
                                  {/* Consulta Row */}
-                                 <tr className="text-center group hover:bg-slate-50">
-                                    <td className="p-3 border-r border-slate-200 font-black text-left bg-slate-50 group-hover:bg-indigo-50 transition-colors">CONSULTA / LIBRES</td>
-                                    <td className="p-3 border-r border-slate-100 text-amber-700 font-bold">{(results.all.hoursBreakdown.day).toFixed(1)}h</td>
-                                    <td className="p-3 border-r border-slate-100 text-indigo-700 font-bold">{(results.all.hoursBreakdown.night).toFixed(1)}h</td>
-                                    <td className="p-3 border-r border-slate-100 text-rose-700 font-bold">{(results.all.hoursBreakdown.holidayDay).toFixed(1)}h</td>
-                                    <td className="p-3 border-r border-slate-100 text-purple-700 font-bold">{(results.all.hoursBreakdown.holidayNight).toFixed(1)}h</td>
-                                    <td className="p-3 border-r border-slate-100 text-rose-500 font-black">
-                                       {(results.all.hoursBreakdown.extraDay + results.all.hoursBreakdown.extraNight + results.all.hoursBreakdown.extraHolidayDay + results.all.hoursBreakdown.extraHolidayNight).toFixed(1)}h
-                                    </td>
+                                 <tr className="text-center group hover:bg-slate-50 divide-x divide-slate-100">
+                                    <td className="p-3 font-black text-left bg-slate-50 group-hover:bg-indigo-50 transition-colors uppercase text-[9px]">CONSULTA / LIBRES</td>
+                                    <td className="p-2 text-amber-700 font-bold">{(results.all.hoursBreakdown.day).toFixed(1)}h</td>
+                                    <td className="p-2 text-indigo-700 font-bold">{(results.all.hoursBreakdown.night).toFixed(1)}h</td>
+                                    <td className="p-2 text-rose-700 font-bold">{(results.all.hoursBreakdown.holidayDay).toFixed(1)}h</td>
+                                    <td className="p-2 text-purple-700 font-bold">{(results.all.hoursBreakdown.holidayNight).toFixed(1)}h</td>
+                                    <td className="p-2 text-rose-600 font-bold">{(results.all.hoursBreakdown.extraDay).toFixed(1)}h</td>
+                                    <td className="p-2 text-rose-600 font-bold">{(results.all.hoursBreakdown.extraNight).toFixed(1)}h</td>
+                                    <td className="p-2 text-rose-600 font-bold">{(results.all.hoursBreakdown.extraHolidayDay).toFixed(1)}h</td>
+                                    <td className="p-2 text-rose-600 font-bold">{(results.all.hoursBreakdown.extraHolidayNight).toFixed(1)}h</td>
                                     <td className="p-3 bg-slate-100 font-black text-slate-900 border-l border-slate-200">
-                                       {(results.all.hoursBreakdown.day + results.all.hoursBreakdown.night + results.all.hoursBreakdown.holidayDay + results.all.hoursBreakdown.holidayNight + results.all.hoursBreakdown.extraDay + results.all.hoursBreakdown.extraNight + results.all.hoursBreakdown.extraHolidayDay + results.all.hoursBreakdown.extraHolidayNight).toFixed(1)}h
+                                       {(results.all.totalMonthlyHours).toFixed(1)}h
                                     </td>
                                  </tr>
                                  {/* AVA Row */}
-                                 <tr className="text-center group hover:bg-indigo-50/50">
-                                    <td className="p-3 border-r border-slate-200 font-black text-left bg-indigo-50/30 group-hover:bg-indigo-50">AVA / VIRTUAL</td>
-                                    <td className="p-3 border-r border-slate-100 text-amber-700 font-bold">{(results.all.avaBreakdown.day).toFixed(1)}h</td>
-                                    <td className="p-3 border-r border-slate-100 text-indigo-700 font-bold">{(results.all.avaBreakdown.night).toFixed(1)}h</td>
-                                    <td className="p-3 border-r border-slate-100 text-rose-700 font-bold">{(results.all.avaBreakdown.holidayDay).toFixed(1)}h</td>
-                                    <td className="p-3 border-r border-slate-100 text-purple-700 font-bold">{(results.all.avaBreakdown.holidayNight).toFixed(1)}h</td>
-                                    <td className="p-3 border-r border-slate-100 text-rose-500 font-black">
-                                       {(results.all.avaBreakdown.extraDay + results.all.avaBreakdown.extraNight + results.all.avaBreakdown.extraHolidayDay + results.all.avaBreakdown.extraHolidayNight).toFixed(1)}h
-                                    </td>
+                                 <tr className="text-center group hover:bg-indigo-50/50 divide-x divide-slate-100">
+                                    <td className="p-3 font-black text-left bg-indigo-50/30 group-hover:bg-indigo-50 uppercase text-[9px]">AVA / VIRTUAL</td>
+                                    <td className="p-2 text-amber-700 font-bold">{(results.all.avaBreakdown.day).toFixed(1)}h</td>
+                                    <td className="p-2 text-indigo-700 font-bold">{(results.all.avaBreakdown.night).toFixed(1)}h</td>
+                                    <td className="p-2 text-rose-700 font-bold">{(results.all.avaBreakdown.holidayDay).toFixed(1)}h</td>
+                                    <td className="p-2 text-purple-700 font-bold">{(results.all.avaBreakdown.holidayNight).toFixed(1)}h</td>
+                                    <td className="p-2 text-rose-600 font-bold">{(results.all.avaBreakdown.extraDay).toFixed(1)}h</td>
+                                    <td className="p-2 text-rose-600 font-bold">{(results.all.avaBreakdown.extraNight).toFixed(1)}h</td>
+                                    <td className="p-2 text-rose-600 font-bold">{(results.all.avaBreakdown.extraHolidayDay).toFixed(1)}h</td>
+                                    <td className="p-2 text-rose-600 font-bold">{(results.all.avaBreakdown.extraHolidayNight).toFixed(1)}h</td>
                                     <td className="p-3 bg-indigo-100/50 font-black text-indigo-900 border-l border-slate-200">
-                                       {(results.all.avaBreakdown.day + results.all.avaBreakdown.night + results.all.avaBreakdown.holidayDay + results.all.avaBreakdown.holidayNight + results.all.avaBreakdown.extraDay + results.all.avaBreakdown.extraNight + results.all.avaBreakdown.extraHolidayDay + results.all.avaBreakdown.extraHolidayNight).toFixed(1)}h
+                                       {(results.all.totalMonthlyAVA).toFixed(1)}h
                                     </td>
                                  </tr>
                                  {/* Pacientes Row */}
-                                 <tr className="text-center group hover:bg-emerald-50/50">
-                                    <td className="p-3 border-r border-slate-200 font-black text-left bg-emerald-50/30 group-hover:bg-emerald-50 text-emerald-800">PACIENTES (PROD)</td>
-                                    <td className="p-3 border-r border-slate-100 text-emerald-600 font-black">{results.all.patientsBreakdown.day}p</td>
-                                    <td className="p-3 border-r border-slate-100 text-emerald-600 font-black">{results.all.patientsBreakdown.night}p</td>
-                                    <td className="p-3 border-r border-slate-100 text-emerald-600 font-black">{results.all.patientsBreakdown.holidayDay}p</td>
-                                    <td className="p-3 border-r border-slate-100 text-emerald-600 font-black">{results.all.patientsBreakdown.holidayNight}p</td>
-                                    <td className="p-3 border-r border-slate-100 text-emerald-400 font-bold italic">-</td>
+                                 <tr className="text-center group hover:bg-emerald-50/50 divide-x divide-slate-100">
+                                    <td className="p-3 font-black text-left bg-emerald-50/30 group-hover:bg-emerald-50 text-emerald-800 uppercase text-[9px]">PACIENTES (PROD)</td>
+                                    <td className="p-2 text-emerald-600 font-black">{results.all.patientsBreakdown.day}p</td>
+                                    <td className="p-2 text-emerald-600 font-black">{results.all.patientsBreakdown.night}p</td>
+                                    <td className="p-2 text-emerald-600 font-black">{results.all.patientsBreakdown.holidayDay}p</td>
+                                    <td className="p-2 text-emerald-600 font-black">{results.all.patientsBreakdown.holidayNight}p</td>
+                                    <td colSpan={4} className="p-2 text-emerald-400 font-bold italic">-</td>
                                     <td className="p-3 bg-emerald-100/50 font-black text-emerald-900 border-l border-slate-200">
                                        {results.all.totalMonthlyPatients}p
                                     </td>
                                  </tr>
                               </tbody>
-                              <tfoot className="bg-slate-900 text-white font-black text-center">
+                              <tfoot className="bg-slate-900 text-white font-black text-center text-[9px] divide-x divide-slate-800">
                                  <tr>
-                                    <td className="p-3 border-r border-slate-700 text-left">TOTAL CONSOLIDADO</td>
-                                    <td className="p-3 border-r border-slate-700">{(results.all.hoursBreakdown.day + results.all.avaBreakdown.day).toFixed(1)}h</td>
-                                    <td className="p-3 border-r border-slate-700">{(results.all.hoursBreakdown.night + results.all.avaBreakdown.night).toFixed(1)}h</td>
-                                    <td className="p-3 border-r border-slate-700">{(results.all.hoursBreakdown.holidayDay + results.all.avaBreakdown.holidayDay).toFixed(1)}h</td>
-                                    <td className="p-3 border-r border-slate-700">{(results.all.hoursBreakdown.holidayNight + results.all.avaBreakdown.holidayNight).toFixed(1)}h</td>
-                                    <td className="p-3 border-r border-slate-700 text-rose-400">{(results.all.totalExtraHours).toFixed(1)}h</td>
-                                    <td className="p-3 bg-slate-950 text-emerald-400 text-xs">{(results.all.totalMonthlyHours).toFixed(1)}h</td>
+                                    <td className="p-3 text-left">TOTAL CONSOLIDADO</td>
+                                    <td className="p-2">{(results.all.hoursBreakdown.day + results.all.avaBreakdown.day).toFixed(1)}h</td>
+                                    <td className="p-2">{(results.all.hoursBreakdown.night + results.all.avaBreakdown.night).toFixed(1)}h</td>
+                                    <td className="p-2">{(results.all.hoursBreakdown.holidayDay + results.all.avaBreakdown.holidayDay).toFixed(1)}h</td>
+                                    <td className="p-2">{(results.all.hoursBreakdown.holidayNight + results.all.avaBreakdown.holidayNight).toFixed(1)}h</td>
+                                    <td className="p-2 text-rose-400">{(results.all.hoursBreakdown.extraDay + results.all.avaBreakdown.extraDay).toFixed(1)}h</td>
+                                    <td className="p-2 text-rose-400">{(results.all.hoursBreakdown.extraNight + results.all.avaBreakdown.extraNight).toFixed(1)}h</td>
+                                    <td className="p-2 text-rose-400">{(results.all.hoursBreakdown.extraHolidayDay + results.all.avaBreakdown.extraHolidayDay).toFixed(1)}h</td>
+                                    <td className="p-2 text-rose-400">{(results.all.hoursBreakdown.extraHolidayNight + results.all.avaBreakdown.extraHolidayNight).toFixed(1)}h</td>
+                                    <td className="p-3 bg-slate-950 text-emerald-400">{(results.all.totalMonthlyHours + results.all.totalMonthlyAVA).toFixed(1)}h</td>
                                  </tr>
                               </tfoot>
                            </table>
@@ -5957,156 +5965,94 @@ function MainApp() {
                      </div>
                   </div>
 
-                  <div className="flex flex-col gap-10">
-                    
-                    {/* Column 1: Income Breakdown */}
-                    <div className="space-y-6">
-                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] flex items-center gap-2">
-                        <div className="w-6 h-0.5 bg-emerald-500" />
-                        Discriminación de Ingresos
-                      </h4>
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                      {/* Column 1: Income Breakdown */}
                       <div className="space-y-4">
-                        <div className="p-6 bg-slate-50 rounded-[32px] border border-slate-100 space-y-5">
-                          <div className="flex justify-between items-end">
-                            <div>
-                               <span className="block text-[10px] font-black text-slate-400 uppercase mb-1">Total Bruto</span>
-                               <span className="text-3xl font-black text-slate-800">{formatCurrency(results.all.gross)}</span>
-                            </div>
-                            <div className="text-right">
-                               <span className="block text-[8px] font-bold text-slate-400 uppercase">Productividad</span>
-                               <span className="text-lg font-bold text-emerald-600">{results.all.totalMonthlyPatients} Pac</span>
-                            </div>
+                        <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] flex items-center gap-2">
+                          <div className="w-6 h-0.5 bg-emerald-500" />
+                          Ingresos Productivos
+                        </h4>
+                        <div className="border border-slate-200 rounded-[32px] overflow-hidden bg-white shadow-sm font-mono">
+                          <div className="bg-slate-50 p-4 border-b border-slate-200 flex justify-between items-center">
+                             <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest leading-none">Base + Variables</span>
+                             <span className="text-xs font-black text-slate-800">{formatCurrency(results.all.gross)}</span>
                           </div>
-                          
-                          <div className="space-y-3 pt-4 border-t border-slate-200">
-                             <div className="space-y-1">
-                                <div className="flex justify-between text-[11px] font-black text-slate-600 uppercase">
-                                   <span>Consulta y Horas Libres</span>
-                                   <span className="font-mono">{formatCurrency(results.all.grossBreakdown.consultationBase)}</span>
-                                </div>
-                                <div className="grid grid-cols-4 gap-1 text-[9px] text-slate-500 font-mono">
-                                   <span>DIU: {(results.all.hoursBreakdown.day + results.all.hoursBreakdown.extraDay).toFixed(1)}h</span>
-                                   <span className="text-center">NOC: {(results.all.hoursBreakdown.night + results.all.hoursBreakdown.extraNight).toFixed(1)}h</span>
-                                   <span className="text-center">F.D: {(results.all.hoursBreakdown.holidayDay + results.all.hoursBreakdown.extraHolidayDay).toFixed(1)}h</span>
-                                   <span className="text-right">F.N: {(results.all.hoursBreakdown.holidayNight + results.all.hoursBreakdown.extraHolidayNight).toFixed(1)}h</span>
-                                </div>
+                          <div className="grid grid-cols-1 divide-y divide-slate-100">
+                             <div className="p-4 flex justify-between items-center hover:bg-slate-50/50 transition-colors">
+                                <span className="text-[10px] font-black text-slate-400 uppercase">Consultas</span>
+                                <span className="text-xs font-bold text-slate-700">{formatCurrency(results.all.grossBreakdown.consultationBase)}</span>
                              </div>
-
-                             <div className="space-y-1 pt-2 border-t border-slate-100">
-                                <div className="flex justify-between text-[11px] font-black text-indigo-600 uppercase">
-                                   <span>AVA y Virtuales</span>
-                                   <span className="font-mono">{formatCurrency(results.all.grossBreakdown.ava)}</span>
-                                </div>
-                                <div className="grid grid-cols-4 gap-1 text-[9px] text-indigo-400 font-mono">
-                                   <span>DIU: {(results.all.avaBreakdown.day + results.all.avaBreakdown.extraDay).toFixed(1)}h</span>
-                                   <span className="text-center">NOC: {(results.all.avaBreakdown.night + results.all.avaBreakdown.extraNight).toFixed(1)}h</span>
-                                   <span className="text-center">F.D: {(results.all.avaBreakdown.holidayDay + results.all.avaBreakdown.extraHolidayDay).toFixed(1)}h</span>
-                                   <span className="text-right">F.N: {(results.all.avaBreakdown.holidayNight + results.all.avaBreakdown.extraHolidayNight).toFixed(1)}h</span>
-                                </div>
+                             <div className="p-4 flex justify-between items-center hover:bg-slate-50/50 transition-colors">
+                                <span className="text-[10px] font-black text-indigo-500 uppercase">AVA / Virtual</span>
+                                <span className="text-xs font-bold text-indigo-700">{formatCurrency(results.all.grossBreakdown.ava)}</span>
                              </div>
-
-                             <div className="space-y-1 pt-2 border-t border-slate-100">
-                                <div className="flex justify-between text-[11px] font-black text-emerald-600 uppercase">
-                                   <span>Pacientes por Productividad</span>
-                                   <span className="font-mono">{formatCurrency(results.all.grossBreakdown.service)}</span>
-                                </div>
-                                <div className="grid grid-cols-3 gap-1 text-[9px] text-emerald-500 font-mono">
-                                   <span>DIU: {results.all.patientsBreakdown.day}p</span>
-                                   <span className="text-center">NOC: {results.all.patientsBreakdown.night}p</span>
-                                   <span className="text-right">FES: {(results.all.patientsBreakdown.holidayDay + results.all.patientsBreakdown.holidayNight)}p</span>
-                                </div>
+                             <div className="p-4 flex justify-between items-center hover:bg-emerald-50 transition-colors">
+                                <span className="text-[10px] font-black text-emerald-600 uppercase">Productividad</span>
+                                <span className="text-xs font-bold text-emerald-700">{formatCurrency(results.all.grossBreakdown.service)}</span>
                              </div>
                           </div>
                         </div>
                       </div>
-                    </div>
 
-                    {/* Column 2: Deductions */}
-                    <div className="space-y-6">
-                       <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] flex items-center gap-2">
-                        <div className="w-6 h-0.5 bg-rose-500" />
-                        Deducciones Aplicadas
-                      </h4>
-                      <div className="p-6 bg-rose-50 rounded-[32px] border border-rose-100 space-y-5">
-                        <div className="flex justify-between items-end">
-                            <div>
-                               <span className="block text-[10px] font-black text-rose-400 uppercase mb-1">Total Descuentos</span>
-                               <span className="text-3xl font-black text-rose-800">-{formatCurrency(results.all.totalDeductions)}</span>
-                            </div>
-                            <div className="text-right">
-                               <span className="block text-[8px] font-bold text-rose-400 uppercase text-center bg-rose-100 px-2 py-0.5 rounded shadow-sm">IBC: {formatCurrency(results.all.ibc)}</span>
-                            </div>
-                        </div>
-
-                        <div className="space-y-3 pt-4 border-t border-rose-200">
-                           <div className="flex justify-between text-[11px] font-bold text-rose-700">
-                              <span className="uppercase">Salud (4% IBC)</span>
-                              <span className="font-mono">-{formatCurrency(results.all.taxBreakdown.health)}</span>
-                           </div>
-                           <div className="flex justify-between text-[11px] font-bold text-rose-700">
-                              <span className="uppercase">Pensión (4% IBC)</span>
-                              <span className="font-mono">-{formatCurrency(results.all.taxBreakdown.pension)}</span>
-                           </div>
-                           <div className="flex justify-between text-[11px] font-black text-rose-900 pt-1 border-t border-rose-200/50">
-                              <span className="uppercase tracking-tight">Otras Deducciones</span>
-                              <span className="font-mono">-{formatCurrency(results.all.additionalDeductions)}</span>
-                           </div>
-                           {results.all.taxBreakdown.fsp > 0 && (
-                             <div className="flex justify-between text-[11px] font-bold text-rose-700 italic">
-                                <span>Fondo Solidaridad Pensional</span>
-                                <span className="font-mono">-{formatCurrency(results.all.taxBreakdown.fsp)}</span>
+                      {/* Column 2: Deductions */}
+                      <div className="space-y-4">
+                         <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] flex items-center gap-2">
+                          <div className="w-6 h-0.5 bg-rose-500" />
+                          Retenciones Legales
+                        </h4>
+                        <div className="border border-slate-200 rounded-[32px] overflow-hidden bg-white shadow-sm font-mono">
+                          <div className="bg-rose-50 p-4 border-b border-rose-100 flex justify-between items-center">
+                             <span className="text-[10px] font-black text-rose-500 uppercase tracking-widest leading-none">Total Descuentos</span>
+                             <span className="text-xs font-black text-rose-700">-{formatCurrency(results.all.totalDeductions)}</span>
+                          </div>
+                          <div className="grid grid-cols-1 divide-y divide-slate-100">
+                             <div className="p-4 flex justify-between items-center hover:bg-rose-50/30 transition-colors">
+                                <span className="text-[10px] font-black text-rose-500 uppercase">Salud / Pensión</span>
+                                <span className="text-xs font-bold text-rose-700">-{formatCurrency(results.all.taxBreakdown.health + results.all.taxBreakdown.pension)}</span>
                              </div>
-                           )}
+                             <div className="p-4 flex justify-between items-center hover:bg-rose-50/30 transition-colors">
+                                <span className="text-[10px] font-black text-rose-500 uppercase">Otras Deduc.</span>
+                                <span className="text-xs font-bold text-rose-700">-{formatCurrency(results.all.additionalDeductions)}</span>
+                             </div>
+                             {results.all.taxBreakdown.fsp > 0 && (
+                               <div className="p-4 flex justify-between items-center hover:bg-rose-50/30 transition-colors">
+                                  <span className="text-[10px] font-black text-rose-500 uppercase">Auditoria FSP</span>
+                                  <span className="text-xs font-bold text-rose-700">-{formatCurrency(results.all.taxBreakdown.fsp)}</span>
+                               </div>
+                             )}
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    {/* Column 3: Social Benefits and Net */}
-                    <div className="space-y-6">
-                       <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] flex items-center gap-2">
-                        <div className="w-6 h-0.5 bg-indigo-500" />
-                        Prestaciones y Neto
-                      </h4>
+                      {/* Column 3: Social Benefits and Net */}
                       <div className="space-y-4">
-                        <div className="p-6 bg-indigo-50 rounded-[32px] border border-indigo-100 space-y-4">
-                           <div className="space-y-1">
-                              <span className="block text-[10px] font-black text-indigo-400 uppercase tracking-widest">Saldo Patrimonial Acumulado</span>
-                              <span className="text-2xl font-black text-indigo-900">
+                         <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] flex items-center gap-2">
+                          <div className="w-6 h-0.5 bg-indigo-500" />
+                          Liquidación Neta
+                        </h4>
+                        <div className="border-2 border-indigo-600 rounded-[32px] overflow-hidden bg-slate-900 shadow-xl font-mono relative">
+                          <div className="absolute top-0 right-0 p-2 opacity-20">
+                             <ShieldCheck className="w-12 h-12 text-white" />
+                          </div>
+                          <div className="p-5 border-b border-slate-800 bg-slate-950/50">
+                             <span className="block text-[8px] font-black text-indigo-400 uppercase tracking-[0.3em] mb-1">Ahorro Prestacional</span>
+                             <span className="text-lg font-black text-indigo-300">
                                 {formatCurrency(results.all.primaProporcional + results.all.cesantiasProporcional + results.all.vacacionesProporcional)}
-                              </span>
-                           </div>
-                           <div className="space-y-2 pt-3 border-t border-indigo-200">
-                              <div className="flex justify-between text-[11px] text-slate-700">
-                                 <span>Prima (Semestre {new Date().getMonth() < 6 ? '1' : '2'}):</span>
-                                 <span className="font-bold text-indigo-700">{formatCurrency(results.all.primaProporcional)}</span>
-                              </div>
-                              <div className="flex justify-between text-[11px] text-slate-700">
-                                 <span>Horas Promedio Vacaciones:</span>
-                                 <span className="font-bold text-indigo-700">{formatCurrency(results.all.vacacionesProporcional)}</span>
-                              </div>
-                              <div className="flex justify-between text-[11px] text-slate-700">
-                                 <span>Cesantías e Intereses:</span>
-                                 <span className="font-bold text-indigo-700">{formatCurrency(results.all.cesantiasProporcional + results.all.interesesCesantias)}</span>
-                              </div>
-                           </div>
-                        </div>
-
-                        <div className="p-6 bg-slate-900 rounded-[32px] shadow-2xl relative overflow-hidden group">
-                           <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/20 to-transparent opacity-50 transition-opacity group-hover:opacity-100" />
-                           <div className="relative z-10 text-center space-y-1">
-                              <span className="text-[10px] font-black text-indigo-300 uppercase tracking-[0.4em]">NETO A RECIBIR</span>
-                              <p className="text-4xl font-black text-white tabular-nums tracking-tighter">
-                                {formatCurrency(results.all.netCash)}
-                              </p>
-                              <div className="inline-flex items-center gap-2 mt-2 px-3 py-1 bg-emerald-500/20 text-emerald-400 rounded-full text-[10px] font-black border border-emerald-500/30">
-                                 <Check className="w-3 h-3" />
-                                 VALOR CONCILIADO CON SECCIÓN 3.5
-                              </div>
-                           </div>
+                             </span>
+                          </div>
+                          <div className="p-6 text-center space-y-1 relative z-10">
+                             <span className="text-[9px] font-black text-indigo-400 uppercase tracking-[0.5em]">TOTAL NETO CAJA</span>
+                             <p className="text-3xl font-black text-white tabular-nums tracking-tighter">
+                               {formatCurrency(results.all.netCash)}
+                             </p>
+                             <div className="inline-flex items-center gap-2 mt-2 px-3 py-1 bg-emerald-500/20 text-emerald-400 rounded-full text-[9px] font-black border border-emerald-500/30">
+                                <Check className="w-3 h-3" />
+                                CONCILIADO
+                             </div>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
 
                   {/* Legal Footer */}
                   <div className="pt-10 border-t border-slate-100 flex flex-col md:flex-row items-center justify-between gap-6">
@@ -6197,64 +6143,71 @@ function MainApp() {
 
                   return (
                     <div className="space-y-6 w-full col-span-full">
-                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        <div className="p-6 bg-slate-50 rounded-[32px] border border-slate-200">
-                          <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
-                            <div className="w-4 h-1 bg-indigo-600" />
-                            Balance General Acumulado
-                          </h4>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
-                            <div className="flex flex-col">
-                              <span className="text-[10px] font-bold text-slate-400 uppercase">Ingreso Bruto Total</span>
-                              <span className="text-xl font-mono text-slate-800 font-bold">{formatCurrency(accumulated.gross)}</span>
-                            </div>
-                            <div className="flex flex-col">
-                              <span className="text-[10px] font-bold text-emerald-500 uppercase">Patrimonio Total (+Prest)</span>
-                              <span className="text-xl font-mono text-emerald-700 font-bold">{formatCurrency(accumulated.totalGross)}</span>
-                            </div>
-                            <div className="flex flex-col">
-                              <span className="text-[10px] font-bold text-rose-500 uppercase">Retenciones Totales</span>
-                              <span className="text-xl font-mono text-rose-700 font-bold">-{formatCurrency(accumulated.deductions)}</span>
-                            </div>
-                            <div className="flex flex-col p-3 bg-indigo-600 rounded-2xl text-white shadow-lg">
-                              <span className="text-[10px] font-black uppercase opacity-80">Saldo Neto Real</span>
-                              <span className="text-xl font-mono font-black">{formatCurrency(accumulated.net)}</span>
-                            </div>
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                        {/* Balance General Card */}
+                        <div className="border-2 border-slate-200 rounded-[32px] overflow-hidden bg-white shadow-sm transition-all hover:shadow-md">
+                          <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
+                             <div className="w-1 h-4 bg-indigo-600 rounded-full" />
+                             <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest leading-none">Balance de Patrimonio Acumulado</span>
+                          </div>
+                          <div className="grid grid-cols-2 divide-x divide-y divide-slate-100 font-mono">
+                             <div className="p-5 flex flex-col justify-center gap-1 group hover:bg-slate-50 transition-colors">
+                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter leading-none mb-1">Ingreso Bruto</span>
+                                <span className="text-base font-black text-slate-800 leading-none">{formatCurrency(accumulated.gross)}</span>
+                             </div>
+                             <div className="p-5 flex flex-col justify-center gap-1 group hover:bg-emerald-50/30 transition-colors">
+                                <span className="text-[9px] font-black text-emerald-500 uppercase tracking-tighter leading-none mb-1">Patrimonio (+Prest)</span>
+                                <span className="text-base font-black text-emerald-700 leading-none">{formatCurrency(accumulated.totalGross)}</span>
+                             </div>
+                             <div className="p-5 flex flex-col justify-center gap-1 group hover:bg-rose-50/30 transition-colors">
+                                <span className="text-[9px] font-black text-rose-500 uppercase tracking-tighter leading-none mb-1">Retenciones</span>
+                                <span className="text-base font-black text-rose-700 leading-none">-{formatCurrency(accumulated.deductions)}</span>
+                             </div>
+                             <div className="p-5 flex flex-col justify-center bg-indigo-600 text-white shadow-[inset_0_2px_10px_rgba(0,0,0,0.1)]">
+                                <span className="text-[9px] font-black uppercase opacity-70 tracking-tighter leading-none mb-1">Saldo Neto Real</span>
+                                <span className="text-lg font-black leading-none drop-shadow-sm">{formatCurrency(accumulated.net)}</span>
+                             </div>
                           </div>
                         </div>
 
-                        <div className="p-6 bg-white rounded-[32px] border border-slate-100 shadow-sm">
-                          <div className="flex items-center justify-between mb-6">
-                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
-                              <div className="w-4 h-1 bg-emerald-500" />
-                              Acumulado de Prestaciones Sociales
-                            </h4>
+                        {/* Prestaciones Card */}
+                        <div className="border-2 border-slate-200 rounded-[32px] overflow-hidden bg-white shadow-sm transition-all hover:shadow-md">
+                          <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                             <div className="flex items-center gap-2">
+                                <div className="w-1 h-4 bg-emerald-600 rounded-full" />
+                                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest leading-none">Provisiones Sociales Técnicas</span>
+                             </div>
+                             <span className="text-[8px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-black uppercase tracking-tighter">Cierre de Vigencia</span>
                           </div>
-                          
-                          <div className="grid grid-cols-2 gap-6">
-                            <div className="space-y-4">
-                              <div className="flex flex-col border-l-2 border-emerald-500 pl-4 py-1">
-                                <span className="text-[9px] font-black text-slate-400 uppercase">Prima de Servicios</span>
-                                <span className="text-lg font-mono font-bold text-emerald-600">{formatCurrency(accumulated.prima)}</span>
-                                <span className="text-[8px] text-slate-400 italic">Vencimiento: Jun / Dic</span>
-                              </div>
-                              <div className="flex flex-col border-l-2 border-amber-500 pl-4 py-1">
-                                <span className="text-[9px] font-black text-slate-400 uppercase">Cesantías</span>
-                                <span className="text-lg font-mono font-bold text-amber-600">{formatCurrency(accumulated.cesantias)}</span>
-                              </div>
-                            </div>
-                            <div className="space-y-4">
-                              <div className="flex flex-col border-l-2 border-violet-500 pl-4 py-1">
-                                <span className="text-[9px] font-black text-slate-400 uppercase">Vacaciones</span>
-                                <span className="text-lg font-mono font-bold text-violet-600">{formatCurrency(accumulated.vacaciones)}</span>
-                                <span className="text-[8px] text-slate-400 italic">Promedio 12 meses</span>
-                              </div>
-                              <div className="flex flex-col border-l-2 border-rose-500 pl-4 py-1">
-                                <span className="text-[9px] font-black text-slate-400 uppercase">Intereses Cesantías</span>
-                                <span className="text-lg font-mono font-bold text-rose-600">{formatCurrency(accumulated.intereses)}</span>
-                                <span className="text-[8px] text-slate-400 italic">12% sobre cesantías</span>
-                              </div>
-                            </div>
+                          <div className="grid grid-cols-2 divide-x divide-y divide-slate-100 font-mono">
+                             <div className="p-5 flex flex-col justify-center gap-1 hover:bg-emerald-50/30 transition-colors">
+                                <div className="flex justify-between items-start mb-1">
+                                   <span className="text-[9px] font-black text-emerald-600 uppercase tracking-tighter">Prima</span>
+                                   <span className="text-[7px] text-slate-400 font-bold">JUN / DIC</span>
+                                </div>
+                                <span className="text-base font-black text-emerald-700 leading-none">{formatCurrency(accumulated.prima)}</span>
+                             </div>
+                             <div className="p-5 flex flex-col justify-center gap-1 hover:bg-amber-50/30 transition-colors">
+                                <div className="flex justify-between items-start mb-1">
+                                   <span className="text-[9px] font-black text-amber-600 uppercase tracking-tighter">Cesantías</span>
+                                   <span className="text-[7px] text-slate-400 font-bold text-right uppercase">Ley 50</span>
+                                </div>
+                                <span className="text-base font-black text-amber-700 leading-none">{formatCurrency(accumulated.cesantias)}</span>
+                             </div>
+                             <div className="p-5 flex flex-col justify-center gap-1 hover:bg-violet-50/30 transition-colors">
+                                <div className="flex justify-between items-start mb-1">
+                                   <span className="text-[9px] font-black text-violet-600 uppercase tracking-tighter">Vacaciones</span>
+                                   <span className="text-[7px] text-slate-400 font-bold">15 DÍAS/AÑO</span>
+                                </div>
+                                <span className="text-base font-black text-violet-700 leading-none">{formatCurrency(accumulated.vacaciones)}</span>
+                             </div>
+                             <div className="p-5 flex flex-col justify-center gap-1 hover:bg-rose-50/30 transition-colors">
+                                <div className="flex justify-between items-start mb-1">
+                                   <span className="text-[9px] font-black text-rose-600 uppercase tracking-tighter">Intereses</span>
+                                   <span className="text-[7px] text-slate-400 font-bold italic">12% ANUAL</span>
+                                </div>
+                                <span className="text-base font-black text-rose-700 leading-none">{formatCurrency(accumulated.intereses)}</span>
+                             </div>
                           </div>
                         </div>
                       </div>
@@ -6281,22 +6234,22 @@ function MainApp() {
                               </div>
                             </div>
                             <div className="overflow-x-auto">
-                              <table className="w-full text-left border-collapse">
+                              <table className="w-full text-left border-collapse border-2 border-slate-200 rounded-2xl overflow-hidden shadow-sm bg-white">
                                 <thead>
-                                  <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                                    <th className="p-4">Mes / Periodo</th>
-                                    <th className="p-4 text-right">Bruto</th>
-                                    <th className="p-4 text-right text-rose-500">Deducc.</th>
-                                    <th className="p-4 text-right text-slate-900 border-x border-slate-200 bg-slate-100/50">Neto Caja</th>
-                                    <th className="p-4 text-right text-emerald-600">Prima</th>
-                                    <th className="p-4 text-right text-amber-600">Cesantías</th>
-                                    <th className="p-4 text-right text-rose-500">Intereses</th>
-                                    <th className="p-4 text-right text-violet-600">Vacaciones</th>
-                                    <th className="p-4 text-right bg-slate-900 text-white">Total Patrim</th>
-                                    <th className="p-4 text-center">Accs</th>
+                                  <tr className="bg-slate-900 text-white font-black uppercase text-[9px] tracking-widest divide-x divide-slate-800">
+                                    <th className="p-3">Mes / Periodo</th>
+                                    <th className="p-3 text-right">Bruto</th>
+                                    <th className="p-3 text-right text-rose-400">Deducc.</th>
+                                    <th className="p-3 text-right text-indigo-300 bg-indigo-950/30 whitespace-nowrap">Neto Caja</th>
+                                    <th className="p-3 text-right text-emerald-400">Prima</th>
+                                    <th className="p-3 text-right text-amber-400">Cesantías</th>
+                                    <th className="p-3 text-right text-rose-400">Intereses</th>
+                                    <th className="p-3 text-right text-violet-400">Vacaciones</th>
+                                    <th className="p-3 text-right bg-indigo-600 text-white">Total Patrim</th>
+                                    <th className="p-3 text-center">Accs</th>
                                   </tr>
                                 </thead>
-                                <tbody className="divide-y divide-slate-100">
+                                <tbody className="divide-y divide-slate-100 font-mono text-[10px] bg-white">
                                   {periods.sort((a, b) => b.startDate.localeCompare(a.startDate)).map(p => {
                                     const isCurrent = p.id === selectedPeriodId;
                                     const pGross = isCurrent ? results.all.gross : (p.totalGross || 0);
@@ -6315,25 +6268,25 @@ function MainApp() {
                                           setSelectedPeriodId(p.id);
                                           if (window.innerWidth < 1024) setShowAccumulatedDetails(false);
                                         }}
-                                        className={`hover:bg-indigo-50/50 transition-colors cursor-pointer group ${isCurrent ? 'bg-indigo-50/30' : ''}`}
+                                        className={`hover:bg-indigo-50/50 transition-colors cursor-pointer group divide-x divide-slate-100 ${isCurrent ? 'bg-indigo-50/40' : ''}`}
                                       >
-                                        <td className="p-4">
+                                        <td className="p-3">
                                           <div className="flex flex-col">
-                                            <span className={`text-[11px] font-black uppercase tracking-tight ${isCurrent ? 'text-indigo-700' : 'text-slate-800'}`}>
+                                            <span className={`text-[10px] font-black uppercase tracking-tight ${isCurrent ? 'text-indigo-700 font-black' : 'text-slate-800'}`}>
                                               {p.name}
                                             </span>
-                                            <span className="text-[9px] text-slate-400 font-mono italic">{p.startDate} - {p.endDate}</span>
+                                            <span className="text-[8px] text-slate-400 italic">{p.startDate} - {p.endDate}</span>
                                           </div>
                                         </td>
-                                        <td className="p-4 text-[11px] font-mono text-right text-slate-600">{formatCurrency(pGross)}</td>
-                                        <td className="p-4 text-[11px] font-mono text-right text-rose-500">-{formatCurrency(pDeductions)}</td>
-                                        <td className="p-4 text-[11px] font-mono text-right font-bold text-slate-900 border-x border-slate-100 bg-slate-50/50">{formatCurrency(pNetCash)}</td>
-                                        <td className="p-4 text-[11px] font-mono text-right text-emerald-600 font-medium">+{formatCurrency(pPrima)}</td>
-                                        <td className="p-4 text-[11px] font-mono text-right text-amber-600 font-medium">+{formatCurrency(pCesantias)}</td>
-                                        <td className="p-4 text-[11px] font-mono text-right text-rose-500 font-medium">+{formatCurrency(pIntereses)}</td>
-                                        <td className="p-4 text-[11px] font-mono text-right text-violet-600 font-medium">+{formatCurrency(pVacaciones)}</td>
-                                        <td className="p-4 text-[11px] font-mono text-right font-black bg-slate-900 text-white">{formatCurrency(pTotal)}</td>
-                                        <td className="p-4 text-center">
+                                        <td className="p-3 text-right text-slate-600 font-bold">{formatCurrency(pGross)}</td>
+                                        <td className="p-3 text-right text-rose-500">-{formatCurrency(pDeductions)}</td>
+                                        <td className="p-3 text-right font-black text-indigo-700 bg-indigo-50/30">{formatCurrency(pNetCash)}</td>
+                                        <td className="p-3 text-right text-emerald-600 font-bold">+{formatCurrency(pPrima)}</td>
+                                        <td className="p-3 text-right text-amber-600 font-bold">+{formatCurrency(pCesantias)}</td>
+                                        <td className="p-3 text-right text-rose-500 font-bold">+{formatCurrency(pIntereses)}</td>
+                                        <td className="p-3 text-right text-violet-600 font-bold">+{formatCurrency(pVacaciones)}</td>
+                                        <td className="p-3 text-right font-black bg-slate-900 text-white">{formatCurrency(pTotal)}</td>
+                                        <td className="p-3 text-center">
                                           <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                              <button 
                                               onClick={(e) => { e.stopPropagation(); openEditPeriod(p); }}
@@ -6355,18 +6308,18 @@ function MainApp() {
                                     );
                                   })}
                                 </tbody>
-                                <tfoot>
-                                  <tr className="bg-slate-900 text-white font-black text-[10px] uppercase tracking-widest">
-                                    <td className="p-4">TOTAL ACUMULADO</td>
-                                    <td className="p-4 text-right">{formatCurrency(accumulated.gross)}</td>
-                                    <td className="p-4 text-right text-rose-400">-{formatCurrency(accumulated.deductions)}</td>
-                                    <td className="p-4 text-right border-x border-white/10 bg-white/5">{formatCurrency(accumulated.gross - accumulated.deductions)}</td>
-                                    <td className="p-4 text-right text-emerald-400">+{formatCurrency(accumulated.prima)}</td>
-                                    <td className="p-4 text-right text-amber-400">+{formatCurrency(accumulated.cesantias)}</td>
-                                    <td className="p-4 text-right text-rose-400">+{formatCurrency(accumulated.intereses)}</td>
-                                    <td className="p-4 text-right text-violet-400">+{formatCurrency(accumulated.vacaciones)}</td>
-                                    <td className="p-4 text-right bg-white text-slate-900 text-xs">{formatCurrency(accumulated.totalGross)}</td>
-                                    <td className="p-4"></td>
+                                <tfoot className="divide-x divide-slate-800 font-mono">
+                                  <tr className="bg-slate-900 text-white font-black text-[9px] uppercase tracking-widest">
+                                    <td className="p-3">TOTAL ACUMULADO</td>
+                                    <td className="p-3 text-right">{formatCurrency(accumulated.gross)}</td>
+                                    <td className="p-3 text-right text-rose-400">-{formatCurrency(accumulated.deductions)}</td>
+                                    <td className="p-3 text-right bg-white/5 whitespace-nowrap">{formatCurrency(accumulated.gross - accumulated.deductions)}</td>
+                                    <td className="p-3 text-right text-emerald-400">+{formatCurrency(accumulated.prima)}</td>
+                                    <td className="p-3 text-right text-amber-400">+{formatCurrency(accumulated.cesantias)}</td>
+                                    <td className="p-3 text-right text-rose-400">+{formatCurrency(accumulated.intereses)}</td>
+                                    <td className="p-3 text-right text-violet-400">+{formatCurrency(accumulated.vacaciones)}</td>
+                                    <td className="p-3 text-right bg-white text-slate-900 text-[10px] shadow-[inset_0_2px_4px_rgba(0,0,0,0.1)]">{formatCurrency(accumulated.totalGross)}</td>
+                                    <td className="p-3"></td>
                                   </tr>
                                 </tfoot>
                               </table>
