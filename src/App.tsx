@@ -589,6 +589,15 @@ const calculatePeriodTotals = (
   const patientsBreakdown = { day: 0, night: 0, holidayDay: 0, holidayNight: 0 };
   const monthlyHours: { [key: string]: number } = {};
   const trisemanaBreakdown: { [trisemanaId: string]: { name: string, ord: number, extra: number } } = {};
+  
+  // Track hours and patients from the SAME trisemanas but recorded in PAST periods
+  let pastTrisemanasHours = 0;
+  let pastTrisemanasPatients = 0;
+  let pastTrisemanasGross = 0;
+  const pastTrisemanasBreakdown = {
+    consultation: { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 },
+    ava: { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 }
+  };
 
   // Components for the new additive logic
   const components = {
@@ -658,6 +667,56 @@ const calculatePeriodTotals = (
         }
         trisemanaBreakdown[trisemana.id].ord += totalRecordOrd;
         trisemanaBreakdown[trisemana.id].extra += totalRecordExtra;
+      } else {
+        // Record is from this trisemana but NOT in the current period view
+        // If it's a PAST record (before this period), we quantify it for the projection report
+        // but ONLY if it belongs to the same billing month (Periodo de Facturación)
+        const activePeriod = periods.find(p => p.id === selectedPeriodId);
+        if (activePeriod && r.date < activePeriod.startDate) {
+          const rDate = new Date(r.date + 'T12:00:00');
+          const pDate = new Date(activePeriod.startDate + 'T12:00:00');
+          const sameFacturacion = rDate.getMonth() === pDate.getMonth() && rDate.getFullYear() === pDate.getFullYear();
+
+          if (sameFacturacion) {
+            const rH = r.hours || { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 };
+            const rA = r.ava || { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 };
+            const rP = r.patients || { day: 0, night: 0, holidayDay: 0, holidayNight: 0 };
+            
+            const hSum = (rH.day + rH.night + rH.holidayDay + rH.holidayNight + rH.extraDay + rH.extraNight + rH.extraHolidayDay + rH.extraHolidayNight);
+            const aSum = (rA.day + rA.night + rA.holidayDay + rA.holidayNight + rA.extraDay + rA.extraNight + rA.extraHolidayDay + rA.extraHolidayNight);
+            
+            pastTrisemanasHours += hSum + aSum;
+  
+            // Populate the past breakdown
+            pastTrisemanasBreakdown.consultation.day += rH.day;
+            pastTrisemanasBreakdown.consultation.night += rH.night;
+            pastTrisemanasBreakdown.consultation.holidayDay += rH.holidayDay;
+            pastTrisemanasBreakdown.consultation.holidayNight += rH.holidayNight;
+            pastTrisemanasBreakdown.consultation.extraDay += rH.extraDay;
+            pastTrisemanasBreakdown.consultation.extraNight += rH.extraNight;
+            pastTrisemanasBreakdown.consultation.extraHolidayDay += rH.extraHolidayDay;
+            pastTrisemanasBreakdown.consultation.extraHolidayNight += rH.extraHolidayNight;
+  
+            pastTrisemanasBreakdown.ava.day += rA.day;
+            pastTrisemanasBreakdown.ava.night += rA.night;
+            pastTrisemanasBreakdown.ava.holidayDay += rA.holidayDay;
+            pastTrisemanasBreakdown.ava.holidayNight += rA.holidayNight;
+            pastTrisemanasBreakdown.ava.extraDay += rA.extraDay;
+            pastTrisemanasBreakdown.ava.extraNight += rA.extraNight;
+            pastTrisemanasBreakdown.ava.extraHolidayDay += rA.extraHolidayDay;
+            pastTrisemanasBreakdown.ava.extraHolidayNight += rA.extraHolidayNight;
+            
+            if (r.applyPatients) {
+              pastTrisemanasPatients += (rP.day + rP.night + rP.holidayDay + rP.holidayNight);
+            } else {
+              // If they don't apply patients, they produce based on hours
+              pastTrisemanasPatients += hSum;
+            }
+            
+            const pastVal = calculateShiftValue(r, rates);
+            pastTrisemanasGross += (pastVal.base + pastVal.extraSurcharge + pastVal.service + pastVal.avaVirtual);
+          }
+        }
       }
 
       // Both regular shift hours and manual additional hours (up to threshold) count towards trisemana
@@ -948,6 +1007,30 @@ const calculatePeriodTotals = (
                             avaVirtualBreakdown.extraDay + avaVirtualBreakdown.extraNight + avaVirtualBreakdown.extraHolidayDay + avaVirtualBreakdown.extraHolidayNight),
     totalRegularHours,
     totalExtraHours,
+    pastTrisemanasHours,
+    pastTrisemanasPatients,
+    pastTrisemanasGross,
+    pastTrisemanasBreakdown,
+    combinedConsultation: {
+      day: hoursBreakdown.day + pastTrisemanasBreakdown.consultation.day,
+      night: hoursBreakdown.night + pastTrisemanasBreakdown.consultation.night,
+      holidayDay: hoursBreakdown.holidayDay + pastTrisemanasBreakdown.consultation.holidayDay,
+      holidayNight: hoursBreakdown.holidayNight + pastTrisemanasBreakdown.consultation.holidayNight,
+      extraDay: hoursBreakdown.extraDay + pastTrisemanasBreakdown.consultation.extraDay,
+      extraNight: hoursBreakdown.extraNight + pastTrisemanasBreakdown.consultation.extraNight,
+      extraHolidayDay: hoursBreakdown.extraHolidayDay + pastTrisemanasBreakdown.consultation.extraHolidayDay,
+      extraHolidayNight: hoursBreakdown.extraHolidayNight + pastTrisemanasBreakdown.consultation.extraHolidayNight,
+    },
+    combinedAVA: {
+      day: avaVirtualBreakdown.day + pastTrisemanasBreakdown.ava.day,
+      night: avaVirtualBreakdown.night + pastTrisemanasBreakdown.ava.night,
+      holidayDay: avaVirtualBreakdown.holidayDay + pastTrisemanasBreakdown.ava.holidayDay,
+      holidayNight: avaVirtualBreakdown.holidayNight + pastTrisemanasBreakdown.ava.holidayNight,
+      extraDay: avaVirtualBreakdown.extraDay + pastTrisemanasBreakdown.ava.extraDay,
+      extraNight: avaVirtualBreakdown.extraNight + pastTrisemanasBreakdown.ava.extraNight,
+      extraHolidayDay: avaVirtualBreakdown.extraHolidayDay + pastTrisemanasBreakdown.ava.extraHolidayDay,
+      extraHolidayNight: avaVirtualBreakdown.extraHolidayNight + pastTrisemanasBreakdown.ava.extraHolidayNight,
+    },
     trisemanaBreakdown,
     recordDistributions,
     totalMonthlyPatients: patientsBreakdown.day + patientsBreakdown.night + patientsBreakdown.holidayDay + patientsBreakdown.holidayNight,
@@ -5034,7 +5117,7 @@ function MainApp() {
                     {/* Global Totals */}
                     <div className="flex flex-wrap items-center gap-6 pb-4 border-b border-slate-100">
                       <div className="bg-indigo-600 px-4 py-3 rounded-2xl text-white shadow-lg shadow-indigo-200">
-                        <p className="text-[10px] opacity-80 uppercase font-black tracking-widest mb-1">Total Consolidado</p>
+                        <p className="text-[10px] opacity-80 uppercase font-black tracking-widest mb-1">Total Consolidado Horas</p>
                         <p className="text-2xl font-mono font-black">
                           {results.all.totalMonthlyHours.toFixed(1)}h
                         </p>
@@ -5945,10 +6028,24 @@ function MainApp() {
                                        {results.all.totalMonthlyPatients}p
                                     </td>
                                  </tr>
+                                 {results.all.pastTrisemanasHours > 0 && (
+                                   <tr className="text-center group bg-slate-50 divide-x divide-slate-100">
+                                      <td className="p-3 font-black text-left text-slate-500 uppercase text-[9px] flex items-center gap-1.5">
+                                        <History className="w-3.5 h-3.5 text-slate-400" />
+                                        ARR. TRISEMANAS PASADAS
+                                      </td>
+                                      <td colSpan={8} className="p-2 text-slate-400 italic text-[9px] font-sans">
+                                        Horas y pacientes de estas trisemanas registrados en liquidaciones anteriores
+                                      </td>
+                                      <td className="p-3 bg-slate-200 font-black text-slate-600 shadow-[inset_2px_0_4px_rgba(0,0,0,0.05)]">
+                                        {results.all.pastTrisemanasHours.toFixed(1)}h / {results.all.pastTrisemanasPatients}p
+                                      </td>
+                                   </tr>
+                                 )}
                               </tbody>
                               <tfoot className="bg-slate-900 text-white font-black text-center text-[9px] divide-x divide-slate-800">
                                  <tr>
-                                    <td className="p-3 text-left">TOTAL CONSOLIDADO</td>
+                                    <td className="p-3 text-left">TOTAL CONSOLIDADO HORAS</td>
                                     <td className="p-2">{(results.all.hoursBreakdown.day + results.all.avaBreakdown.day).toFixed(1)}h</td>
                                     <td className="p-2">{(results.all.hoursBreakdown.night + results.all.avaBreakdown.night).toFixed(1)}h</td>
                                     <td className="p-2">{(results.all.hoursBreakdown.holidayDay + results.all.avaBreakdown.holidayDay).toFixed(1)}h</td>
@@ -5978,18 +6075,77 @@ function MainApp() {
                              <span className="text-xs font-black text-slate-800">{formatCurrency(results.all.gross)}</span>
                           </div>
                           <div className="grid grid-cols-1 divide-y divide-slate-100">
-                             <div className="p-4 flex justify-between items-center hover:bg-slate-50/50 transition-colors">
-                                <span className="text-[10px] font-black text-slate-400 uppercase">Consultas</span>
-                                <span className="text-xs font-bold text-slate-700">{formatCurrency(results.all.grossBreakdown.consultationBase)}</span>
+                             <div className="p-4 hover:bg-slate-50/50 transition-colors">
+                                <div className="flex justify-between items-center mb-3">
+                                   <span className="text-[10px] font-black text-slate-400 uppercase">Consultas / Base</span>
+                                   <span className="text-xs font-bold text-slate-700">{formatCurrency(results.all.grossBreakdown.consultationBase)}</span>
+                                </div>
+                                <div className="grid grid-cols-4 gap-1.5">
+                                   {[
+                                      { label: 'DIU', val: results.all.combinedConsultation.day },
+                                      { label: 'NOC', val: results.all.combinedConsultation.night },
+                                      { label: 'FDI', val: results.all.combinedConsultation.holidayDay },
+                                      { label: 'FNO', val: results.all.combinedConsultation.holidayNight },
+                                      { label: 'EXD', val: results.all.combinedConsultation.extraDay, isExtra: true },
+                                      { label: 'EXN', val: results.all.combinedConsultation.extraNight, isExtra: true },
+                                      { label: 'EFD', val: results.all.combinedConsultation.extraHolidayDay, isExtra: true },
+                                      { label: 'EFN', val: results.all.combinedConsultation.extraHolidayNight, isExtra: true },
+                                   ].filter(h => h.val > 0).map((h, idx) => (
+                                      <div key={idx} className={`flex flex-col items-center justify-center py-1 rounded border ${h.isExtra ? 'bg-rose-50 border-rose-100 text-rose-600' : 'bg-slate-50 border-slate-100 text-slate-600'}`}>
+                                         <span className="text-[6px] font-black uppercase tracking-tighter">{h.label}</span>
+                                         <span className="text-[9px] font-black">{h.val.toFixed(1)}h</span>
+                                      </div>
+                                   ))}
+                                </div>
                              </div>
-                             <div className="p-4 flex justify-between items-center hover:bg-slate-50/50 transition-colors">
-                                <span className="text-[10px] font-black text-indigo-500 uppercase">AVA / Virtual</span>
-                                <span className="text-xs font-bold text-indigo-700">{formatCurrency(results.all.grossBreakdown.ava)}</span>
+                             <div className="p-4 hover:bg-slate-50/50 transition-colors">
+                                <div className="flex justify-between items-center mb-3">
+                                   <span className="text-[10px] font-black text-indigo-500 uppercase">AVA / Virtual</span>
+                                   <span className="text-xs font-bold text-indigo-700">{formatCurrency(results.all.grossBreakdown.ava)}</span>
+                                </div>
+                                <div className="grid grid-cols-4 gap-1.5">
+                                   {[
+                                      { label: 'DIU', val: results.all.combinedAVA.day },
+                                      { label: 'NOC', val: results.all.combinedAVA.night },
+                                      { label: 'FDI', val: results.all.combinedAVA.holidayDay },
+                                      { label: 'FNO', val: results.all.combinedAVA.holidayNight },
+                                      { label: 'EXD', val: results.all.combinedAVA.extraDay, isExtra: true },
+                                      { label: 'EXN', val: results.all.combinedAVA.extraNight, isExtra: true },
+                                      { label: 'EFD', val: results.all.combinedAVA.extraHolidayDay, isExtra: true },
+                                      { label: 'EFN', val: results.all.combinedAVA.extraHolidayNight, isExtra: true },
+                                   ].filter(h => h.val > 0).map((h, idx) => (
+                                      <div key={idx} className={`flex flex-col items-center justify-center py-1 rounded border ${h.isExtra ? 'bg-indigo-50/50 border-indigo-100 text-indigo-500' : 'bg-slate-50 border-slate-100 text-slate-600'}`}>
+                                         <span className="text-[6px] font-black uppercase tracking-tighter">{h.label}</span>
+                                         <span className="text-[9px] font-black">{h.val.toFixed(1)}h</span>
+                                      </div>
+                                   ))}
+                                </div>
                              </div>
                              <div className="p-4 flex justify-between items-center hover:bg-emerald-50 transition-colors">
                                 <span className="text-[10px] font-black text-emerald-600 uppercase">Productividad</span>
                                 <span className="text-xs font-bold text-emerald-700">{formatCurrency(results.all.grossBreakdown.service)}</span>
                              </div>
+                             {results.all.pastTrisemanasGross > 0 && (
+                               <div className="p-4 bg-slate-50 border-t border-slate-100/50 space-y-2">
+                                  <div className="flex justify-between items-center">
+                                     <div className="flex items-center gap-1.5">
+                                        <History className="w-3 h-3 text-slate-400" />
+                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">Arrastre Trisemanas Pasadas</span>
+                                     </div>
+                                     <span className="text-xs font-black text-slate-500">{formatCurrency(results.all.pastTrisemanasGross)}</span>
+                                  </div>
+                                  <div className="flex gap-4">
+                                     <div className="flex items-center gap-1.5 bg-white px-2 py-1 rounded-lg border border-slate-100 shadow-sm">
+                                        <Clock className="w-2.5 h-2.5 text-slate-400" />
+                                        <span className="text-[10px] font-bold text-slate-600">{results.all.pastTrisemanasHours.toFixed(1)}h</span>
+                                     </div>
+                                     <div className="flex items-center gap-1.5 bg-white px-2 py-1 rounded-lg border border-slate-100 shadow-sm">
+                                        <Users className="w-2.5 h-2.5 text-slate-400" />
+                                        <span className="text-[10px] font-bold text-slate-600 font-mono">{results.all.pastTrisemanasPatients}p</span>
+                                     </div>
+                                  </div>
+                               </div>
+                             )}
                           </div>
                         </div>
                       </div>
