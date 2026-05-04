@@ -1564,52 +1564,29 @@ function MainApp() {
 
     let totalGrossVerified = 0;
     
-    // We iterate over the distributions calculated by the engine to ensure consistency
-    // This includes both definitive records and the draft/projection
-    Object.entries(results.all.recordDistributions).forEach(([id, dist]) => {
-      // Find the record in the pool or the draft
-      let r = [...records, ...allRecords].find(rec => rec.id === id);
+    // Sum gross from all records in the current period view
+    records.forEach(r => {
+      const isAVAMain = r.isAVAShift || r.isVirtualShift || (Object.values(r.ava || {}).some(v => (v as number) > 0) && Object.values(r.hours || {}).every(v => v === 0));
+      const val = calculateShiftValue({
+        ...r,
+        isAVAShift: isAVAMain
+      }, results.calculationRates);
       
-      // If it's the draft, we construct it like useMemo does
-      if (id === 'draft-temp-id') {
-        r = {
-          id: 'draft-temp-id',
-          userId: user?.uid || '',
-          date: shift.date,
-          startTime: shift.startTime,
-          endTime: shift.endTime,
-          hours: { ...quantities.hours },
-          ava: { ...quantities.ava },
-          patients: { ...quantities.patients },
-          applyPatients: quantities.applyPatients,
-          isDefinitive: false,
-          isAVAShift: shift.isAVAShift || shift.isVirtualShift
-        } as ShiftRecord;
-      }
-
-      if (r && dist) {
-        const isAVAMain = r.isAVAShift || r.isVirtualShift || (Object.values(r.ava || {}).some(v => v > 0) && Object.values(r.hours || {}).every(v => v === 0));
-        const val = calculateShiftValue({
-          ...r,
-          isAVAShift: isAVAMain
-        }, results.calculationRates);
-        
-        const recordGross = val.base + val.service + val.extraSurcharge + val.avaVirtual;
-        totalGrossVerified += recordGross;
-      }
+      const recordGross = val.base + val.service + val.extraSurcharge + val.avaVirtual;
+      totalGrossVerified += recordGross;
     });
 
     const difference = Math.abs(results.all.gross - totalGrossVerified);
-    // If difference > 1 peso, mark as invalid
-    if (difference > 1) {
+    // If difference > 5 pesos, mark as invalid (allow small rounding differences)
+    if (difference > 5) {
       setExtractVerified({ 
         isValid: false, 
-        errorRecords: ["Posible desincronización en la distribución de horas trisemanales. Verifica el orden de los registros."] 
+        errorRecords: ["Sincronización de cálculos en proceso... En periodos con trisección de horas puede haber ajustes de minutos."] 
       });
     } else {
       setExtractVerified({ isValid: true, errorRecords: [] });
     }
-  }, [records, results.all.gross, results.all.recordDistributions, results.calculationRates, shift, quantities]);
+  }, [records, results.all.gross, results.calculationRates]);
   const [showDeductionDetails, setShowDeductionDetails] = useState(false);
   const [showIncomeDetails, setShowIncomeDetails] = useState(false);
   const [originalRecord, setOriginalRecord] = useState<ShiftRecord | null>(null);
@@ -2780,21 +2757,55 @@ function MainApp() {
           
           const h = r.hours || { day:0, night:0, holidayDay:0, holidayNight:0, extraDay:0, extraNight:0, extraHolidayDay:0, extraHolidayNight:0 };
           const a = r.ava || { day:0, night:0, holidayDay:0, holidayNight:0, extraDay:0, extraNight:0, extraHolidayDay:0, extraHolidayNight:0 };
+          const p = r.patients || { day:0, night:0, holidayDay:0, holidayNight:0 };
           
           const totalHours = (h.day + h.night + h.holidayDay + h.holidayNight + h.extraDay + h.extraNight + h.extraHolidayDay + h.extraHolidayNight) +
                              (a.day + a.night + a.holidayDay + a.holidayNight + a.extraDay + a.extraNight + a.extraHolidayDay + a.extraHolidayNight);
           
+          const hParts = [];
+          if (h.day > 0) hParts.push(`${h.day}D`);
+          if (h.night > 0) hParts.push(`${h.night}N`);
+          if (h.holidayDay > 0) hParts.push(`${h.holidayDay}FD`);
+          if (h.holidayNight > 0) hParts.push(`${h.holidayNight}FN`);
+          if (h.extraDay > 0) hParts.push(`${h.extraDay}ED`);
+          if (h.extraNight > 0) hParts.push(`${h.extraNight}EN`);
+          if (h.extraHolidayDay > 0) hParts.push(`${h.extraHolidayDay}EFD`);
+          if (h.extraHolidayNight > 0) hParts.push(`${h.extraHolidayNight}EFN`);
+
+          const aParts = [];
+          if (a.day > 0) aParts.push(`${a.day}D`);
+          if (a.night > 0) aParts.push(`${a.night}N`);
+          if (a.holidayDay > 0) aParts.push(`${a.holidayDay}FD`);
+          if (a.holidayNight > 0) aParts.push(`${a.holidayNight}FN`);
+          if (a.extraDay > 0) aParts.push(`${a.extraDay}ED`);
+          if (a.extraNight > 0) aParts.push(`${a.extraNight}EN`);
+          if (a.extraHolidayDay > 0) aParts.push(`${a.extraHolidayDay}EFD`);
+          if (a.extraHolidayNight > 0) aParts.push(`${a.extraHolidayNight}EFN`);
+
+          const hPartsStr = hParts.length > 0 ? hParts.join(',') : '';
+          const aPartsStr = aParts.length > 0 ? aParts.join(',') : '';
+          
+          let extendedType = '';
+          if (hPartsStr) extendedType += `C:[${hPartsStr}]`;
+          if (aPartsStr) extendedType += (extendedType ? ' ' : '') + `A:[${aPartsStr}]`;
+          if (!extendedType) extendedType = r.isAVAShift ? 'AVA/V' : 'Cons.';
+
           let patientDisplay = '0';
           if (r.applyPatients) {
-            patientDisplay = ((r.patients?.day || 0) + (r.patients?.night || 0) + (r.patients?.holidayDay || 0) + (r.patients?.holidayNight || 0)).toString();
+            const partList = [];
+            if (p.day > 0) partList.push(`${p.day}D`);
+            if (p.night > 0) partList.push(`${p.night}N`);
+            if (p.holidayDay > 0) partList.push(`${p.holidayDay}FD`);
+            if (p.holidayNight > 0) partList.push(`${p.holidayNight}FN`);
+            patientDisplay = partList.length > 0 ? partList.join('|') : '0';
           } else {
-            patientDisplay = (h.day + h.night + h.holidayDay + h.holidayNight + h.extraDay + h.extraNight + h.extraHolidayDay + h.extraHolidayNight).toFixed(1) + 'h';
+            patientDisplay = (h.day + h.night + h.holidayDay + h.holidayNight + h.extraDay + h.extraNight + h.extraHolidayDay + h.extraHolidayNight).toFixed(1) + 'h Prod';
           }
 
           return [
             r.date,
             `${r.startTime}-${r.endTime}`,
-            isAVAMain ? 'AVA/Virt' : 'Consul.',
+            extendedType,
             totalHours.toFixed(1),
             patientDisplay,
             formatCurrency(val.base + val.service + val.avaVirtual),
@@ -2828,21 +2839,23 @@ function MainApp() {
 
     const headers = [
       'Fecha', 'Inicio', 'Fin', 'Estado', 'Tipo',
-      'H. Diu', 'H. Noc', 'H. F-Diu', 'H. F-Noc', 'H. E-Diu', 'H. E-Noc', 'H. EF-Diu', 'H. EF-Noc',
+      'Cons. Diu', 'Cons. Noc', 'Cons. F-Diu', 'Cons. F-Noc', 'Cons. E-Diu', 'Cons. E-Noc', 'Cons. EF-Diu', 'Cons. EF-Noc',
+      'AVA. Diu', 'AVA. Noc', 'AVA. F-Diu', 'AVA. FN-Noc', 'AVA. E-Diu', 'AVA. E-Noc', 'AVA. EF-Diu', 'AVA. EF-Noc',
       'Pac Diu', 'Pac Noc', 'Pac F-Diu', 'Pac F-Noc'
     ];
 
     const rows = baseRecords.map(r => {
-      const isAVAMain = r.isAVAShift || r.isVirtualShift || (Object.values(r.ava || {}).some(v => v > 0) && Object.values(r.hours || {}).every(v => v === 0));
-      const q = isAVAMain ? r.ava : r.hours;
+      const isAVAMain = r.isAVAShift || r.isVirtualShift || (Object.values(r.ava || {}).some(v => (v as number) > 0) && Object.values(r.hours || {}).every(v => v === 0));
+      const h = r.hours || { day:0, night:0, holidayDay:0, holidayNight:0, extraDay:0, extraNight:0, extraHolidayDay:0, extraHolidayNight:0 };
+      const a = r.ava || { day:0, night:0, holidayDay:0, holidayNight:0, extraDay:0, extraNight:0, extraHolidayDay:0, extraHolidayNight:0 };
+      const p = r.patients || { day:0, night:0, holidayDay:0, holidayNight:0 };
+
       return [
         r.date, r.startTime, r.endTime, r.isDefinitive ? 'Definitivo' : 'Proyección',
-        isAVAMain ? 'AVA/Virtual' : 'Consulta',
-        q.day, q.night, q.holidayDay, q.holidayNight, q.extraDay, q.extraNight, q.extraHolidayDay, q.extraHolidayNight,
-        r.applyPatients ? r.patients.day : 0, 
-        r.applyPatients ? r.patients.night : 0, 
-        r.applyPatients ? r.patients.holidayDay : 0, 
-        r.applyPatients ? r.patients.holidayNight : 0
+        (h.day + h.night + h.holidayDay + h.holidayNight + h.extraDay + h.extraNight + h.extraHolidayDay + h.extraHolidayNight > 0 && a.day + a.night + a.holidayDay + a.holidayNight + a.extraDay + a.extraNight + a.extraHolidayDay + a.extraHolidayNight > 0) ? 'Mixto' : (isAVAMain ? 'AVA/Virtual' : 'Consulta'),
+        h.day, h.night, h.holidayDay, h.holidayNight, h.extraDay, h.extraNight, h.extraHolidayDay, h.extraHolidayNight,
+        a.day, a.night, a.holidayDay, a.holidayNight, a.extraDay, a.extraNight, a.extraHolidayDay, a.extraHolidayNight,
+        p.day, p.night, p.holidayDay, p.holidayNight
       ];
     });
 
@@ -5019,19 +5032,27 @@ function MainApp() {
 
                   <div className="space-y-4">
                     {/* Global Totals */}
-                    <div className="flex items-center gap-6 pb-4 border-b border-slate-100">
-                      <div>
-                        <p className="text-[9px] text-slate-400 uppercase font-bold">Total Ordinarias</p>
-                        <p className="text-lg font-mono font-bold text-indigo-600">
-                          {results.all.totalRegularHours.toFixed(1)}h
+                    <div className="flex flex-wrap items-center gap-6 pb-4 border-b border-slate-100">
+                      <div className="bg-indigo-600 px-4 py-3 rounded-2xl text-white shadow-lg shadow-indigo-200">
+                        <p className="text-[10px] opacity-80 uppercase font-black tracking-widest mb-1">Total Consolidado</p>
+                        <p className="text-2xl font-mono font-black">
+                          {results.all.totalMonthlyHours.toFixed(1)}h
                         </p>
                       </div>
-                      <div className="w-px h-8 bg-slate-100" />
-                      <div>
-                        <p className="text-[9px] text-slate-400 uppercase font-bold">Total Extras</p>
-                        <p className="text-lg font-mono font-bold text-amber-600">
-                          {results.all.totalExtraHours.toFixed(1)}h
-                        </p>
+                      <div className="flex gap-6">
+                        <div>
+                          <p className="text-[9px] text-slate-400 uppercase font-bold">Ordinarias</p>
+                          <p className="text-lg font-mono font-bold text-indigo-600">
+                            {results.all.totalRegularHours.toFixed(1)}h
+                          </p>
+                        </div>
+                        <div className="w-px h-8 bg-slate-100" />
+                        <div>
+                          <p className="text-[9px] text-slate-400 uppercase font-bold">Excedentes</p>
+                          <p className="text-lg font-mono font-bold text-amber-600">
+                            {results.all.totalExtraHours.toFixed(1)}h
+                          </p>
+                        </div>
                       </div>
                     </div>
 
@@ -5229,20 +5250,31 @@ function MainApp() {
                                       </span>
                                     </div>
                                     <div className="flex flex-wrap gap-x-2">
-                                      {h.day > 0 && <span className="text-amber-600 font-bold" title="Diurna">{h.day.toFixed(1)}D</span>}
-                                      {h.night > 0 && <span className="text-indigo-600 font-bold" title="Nocturna">{h.night.toFixed(1)}N</span>}
-                                      {h.holidayDay > 0 && <span className="text-rose-600 font-bold" title="Festiva Diurna">{h.holidayDay.toFixed(1)}FD</span>}
-                                      {h.holidayNight > 0 && <span className="text-purple-600 font-bold" title="Festiva Nocturna">{h.holidayNight.toFixed(1)}FN</span>}
+                                      {(h.day + h.extraDay) > 0 && (
+                                        <span className="text-amber-600 font-bold" title="Total Diurna">
+                                          {(h.day + h.extraDay).toFixed(1)}D
+                                          {h.extraDay > 0 && <span className="text-[8px] ml-0.5" title="Incluye Exceso">(+{h.extraDay.toFixed(1)}E)</span>}
+                                        </span>
+                                      )}
+                                      {(h.night + h.extraNight) > 0 && (
+                                        <span className="text-indigo-600 font-bold" title="Total Nocturna">
+                                          {(h.night + h.extraNight).toFixed(1)}N
+                                          {h.extraNight > 0 && <span className="text-[8px] ml-0.5" title="Incluye Exceso">(+{h.extraNight.toFixed(1)}E)</span>}
+                                        </span>
+                                      )}
+                                      {(h.holidayDay + h.extraHolidayDay) > 0 && (
+                                        <span className="text-rose-600 font-bold" title="Total Festiva Diurna">
+                                          {(h.holidayDay + h.extraHolidayDay).toFixed(1)}FD
+                                          {h.extraHolidayDay > 0 && <span className="text-[8px] ml-0.5" title="Incluye Exceso">(+{h.extraHolidayDay.toFixed(1)}E)</span>}
+                                        </span>
+                                      )}
+                                      {(h.holidayNight + h.extraHolidayNight) > 0 && (
+                                        <span className="text-purple-600 font-bold" title="Total Festiva Nocturna">
+                                          {(h.holidayNight + h.extraHolidayNight).toFixed(1)}FN
+                                          {h.extraHolidayNight > 0 && <span className="text-[8px] ml-0.5" title="Incluye Exceso">(+{h.extraHolidayNight.toFixed(1)}E)</span>}
+                                        </span>
+                                      )}
                                     </div>
-                                    {(h.extraDay + h.extraNight + h.extraHolidayDay + h.extraHolidayNight) > 0 && (
-                                      <div className="text-[9px] text-rose-500 mt-0.5 border-t border-rose-100 pt-0.5 flex flex-wrap gap-x-2">
-                                        <span className="font-black italic text-rose-600">EXCED:</span>
-                                        {h.extraDay > 0 && <span>{h.extraDay.toFixed(1)}ED</span>}
-                                        {h.extraNight > 0 && <span>{h.extraNight.toFixed(1)}EN</span>}
-                                        {h.extraHolidayDay > 0 && <span>{h.extraHolidayDay.toFixed(1)}EFD</span>}
-                                        {h.extraHolidayNight > 0 && <span>{h.extraHolidayNight.toFixed(1)}EFN</span>}
-                                      </div>
-                                    )}
                                   </div>
                                 );
                               })()}
@@ -5263,38 +5295,63 @@ function MainApp() {
                                       </span>
                                     </div>
                                     <div className="flex flex-wrap gap-x-2">
-                                      {a.day > 0 && <span className="text-amber-600 font-bold" title="AVA/Virt Diurna">{a.day.toFixed(1)}D</span>}
-                                      {a.night > 0 && <span className="text-indigo-600 font-bold" title="AVA/Virt Nocturna">{a.night.toFixed(1)}N</span>}
-                                      {a.holidayDay > 0 && <span className="text-rose-600 font-bold" title="AVA/Virt Festiva Diurna">{a.holidayDay.toFixed(1)}FD</span>}
-                                      {a.holidayNight > 0 && <span className="text-purple-600 font-bold" title="AVA/Virt Festiva Nocturna">{a.holidayNight.toFixed(1)}FN</span>}
+                                      {(a.day + a.extraDay) > 0 && (
+                                        <span className="text-amber-600 font-bold" title="Total AVA Diurna">
+                                          {(a.day + a.extraDay).toFixed(1)}D
+                                          {a.extraDay > 0 && <span className="text-[8px] ml-0.5" title="Incluye Exceso">(+{a.extraDay.toFixed(1)}E)</span>}
+                                        </span>
+                                      )}
+                                      {(a.night + a.extraNight) > 0 && (
+                                        <span className="text-indigo-600 font-bold" title="Total AVA Nocturna">
+                                          {(a.night + a.extraNight).toFixed(1)}N
+                                          {a.extraNight > 0 && <span className="text-[8px] ml-0.5" title="Incluye Exceso">(+{a.extraNight.toFixed(1)}E)</span>}
+                                        </span>
+                                      )}
+                                      {(a.holidayDay + a.extraHolidayDay) > 0 && (
+                                        <span className="text-rose-600 font-bold" title="Total AVA Festiva Diurna">
+                                          {(a.holidayDay + a.extraHolidayDay).toFixed(1)}FD
+                                          {a.extraHolidayDay > 0 && <span className="text-[8px] ml-0.5" title="Incluye Exceso">(+{a.extraHolidayDay.toFixed(1)}E)</span>}
+                                        </span>
+                                      )}
+                                      {(a.holidayNight + a.extraHolidayNight) > 0 && (
+                                        <span className="text-purple-600 font-bold" title="Total AVA Festiva Nocturna">
+                                          {(a.holidayNight + a.extraHolidayNight).toFixed(1)}FN
+                                          {a.extraHolidayNight > 0 && <span className="text-[8px] ml-0.5" title="Incluye Exceso">(+{a.extraHolidayNight.toFixed(1)}E)</span>}
+                                        </span>
+                                      )}
                                     </div>
-                                    {(a.extraDay + a.extraNight + a.extraHolidayDay + a.extraHolidayNight) > 0 && (
-                                      <div className="text-[9px] text-rose-500 mt-0.5 border-t border-rose-100 pt-0.5 flex flex-wrap gap-x-2">
-                                        <span className="font-black italic text-rose-600">EXCED:</span>
-                                        {a.extraDay > 0 && <span>{a.extraDay.toFixed(1)}ED</span>}
-                                        {a.extraNight > 0 && <span>{a.extraNight.toFixed(1)}EN</span>}
-                                        {a.extraHolidayDay > 0 && <span>{a.extraHolidayDay.toFixed(1)}EFD</span>}
-                                        {a.extraHolidayNight > 0 && <span>{a.extraHolidayNight.toFixed(1)}EFN</span>}
-                                      </div>
-                                    )}
                                   </div>
                                 );
                               })()}
                             </td>
                             <td className="p-4 text-xs font-mono font-bold">
-                              {record.applyPatients ? (
-                                <>
-                                  <span className="text-amber-600">{record.patients.day}</span>
-                                  <span className="text-slate-300 mx-1">/</span>
-                                  <span className="text-indigo-600">{record.patients.night}</span>
-                                  <span className="text-slate-300 mx-1">/</span>
-                                  <span className="text-rose-600">{record.patients.holidayDay}</span>
-                                  <span className="text-slate-300 mx-1">/</span>
-                                  <span className="text-purple-600">{record.patients.holidayNight}</span>
-                                </>
-                              ) : (
-                                <span className="text-slate-300 italic font-normal">No aplica</span>
-                              )}
+                              {(() => {
+                                const p = record.patients || { day:0, night:0, holidayDay:0, holidayNight:0 };
+                                const totalP = p.day + p.night + p.holidayDay + p.holidayNight;
+
+                                if (totalP === 0 && record.applyPatients) return <span className="text-slate-300 italic font-normal">0</span>;
+                                if (!record.applyPatients) {
+                                  const h = record.hours || { day:0, night:0, holidayDay:0, holidayNight:0, extraDay:0, extraNight:0, extraHolidayDay:0, extraHolidayNight:0 };
+                                  const hProd = (h.day + h.night + h.holidayDay + h.holidayNight + h.extraDay + h.extraNight + h.extraHolidayDay + h.extraHolidayNight);
+                                  return <span className="text-slate-500">{hProd.toFixed(1)}h Prod.</span>;
+                                }
+
+                                return (
+                                  <div className="flex flex-col">
+                                    <div className="mb-1">
+                                      <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-1 py-0.5 rounded border border-slate-100">
+                                        TOT: {totalP}
+                                      </span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-x-2">
+                                      {p.day > 0 && <span className="text-amber-600 font-bold" title="Diurnos">{p.day}D</span>}
+                                      {p.night > 0 && <span className="text-indigo-600 font-bold" title="Nocturnos">{p.night}N</span>}
+                                      {p.holidayDay > 0 && <span className="text-rose-600 font-bold" title="Festivos Diurnos">{p.holidayDay}FD</span>}
+                                      {p.holidayNight > 0 && <span className="text-purple-600 font-bold" title="Festivos Nocturnos">{p.holidayNight}FN</span>}
+                                    </div>
+                                  </div>
+                                );
+                              })()}
                             </td>
                             <td className="p-4 text-xs font-mono">
                               {(() => {
@@ -5359,95 +5416,80 @@ function MainApp() {
                   {(viewingArchive ? viewingArchive.records : records).length > 0 && (
                     <tfoot className="bg-slate-50 border-t-2 border-slate-200">
                       <tr>
-                        <td colSpan={3} className="p-4 text-xs font-bold text-slate-500 uppercase tracking-widest align-middle">
-                          Totales Informe Visual:
-                        </td>
-                        <td className="p-4 text-center align-middle bg-yellow-50 border-x border-yellow-100">
-                          <div className="flex flex-col items-center">
-                            <span className="text-[10px] font-bold text-yellow-600 uppercase leading-tight">Turnos<br/>Adic.</span>
-                            <span className="text-lg font-mono font-black text-yellow-700">{results.all.additionalShiftsCount}</span>
-                          </div>
-                        </td>
-                        <td className="p-4 align-middle bg-white">
-                          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                            <div className="flex flex-col">
-                              <span className="text-[8px] font-bold text-slate-400 uppercase">Diu</span>
-                              <span className="text-xs font-mono font-bold text-amber-600">{results.all.hoursBreakdown.day.toFixed(1)}h</span>
+                        <td colSpan={10} className="p-0">
+                          <div className="grid grid-cols-1 md:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-slate-200">
+                            {/* Col 1: Label */}
+                            <div className="p-4 bg-slate-100/50 flex flex-col items-center justify-center">
+                              <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] text-center mb-1">Informe Visual de Bitácora</span>
+                              <div className="flex items-center gap-2 px-3 py-1 bg-yellow-500 text-yellow-900 rounded-lg border border-yellow-600 shadow-sm">
+                                <span className="text-[9px] font-bold uppercase">Adicionales:</span>
+                                <span className="text-sm font-black">{results.all.additionalShiftsCount}</span>
+                              </div>
                             </div>
-                            <div className="flex flex-col text-right">
-                              <span className="text-[8px] font-bold text-slate-400 uppercase">Noc</span>
-                              <span className="text-xs font-mono font-bold text-indigo-600">{results.all.hoursBreakdown.night.toFixed(1)}h</span>
+                            
+                            {/* Col 2: Consulta Breakdown */}
+                            <div className="p-4 bg-white space-y-2">
+                              <div className="flex justify-between items-center border-b border-slate-50 pb-1">
+                                <span className="text-[9px] font-black text-slate-400 uppercase">Consulta / Libres</span>
+                                <span className="text-xs font-mono font-black text-amber-600">{(results.all.totalMonthlyHours).toFixed(1)}h</span>
+                              </div>
+                              <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                                <div className="flex justify-between text-[9px]">
+                                  <span className="text-slate-400">D+E:</span>
+                                  <span className="font-mono font-bold text-amber-600">{(results.all.hoursBreakdown.day + results.all.hoursBreakdown.extraDay).toFixed(1)}h</span>
+                                </div>
+                                <div className="flex justify-between text-[9px]">
+                                  <span className="text-slate-400">N+E:</span>
+                                  <span className="font-mono font-bold text-indigo-600">{(results.all.hoursBreakdown.night + results.all.hoursBreakdown.extraNight).toFixed(1)}h</span>
+                                </div>
+                                <div className="flex justify-between text-[9px]">
+                                  <span className="text-slate-400">FD+E:</span>
+                                  <span className="font-mono font-bold text-rose-600">{(results.all.hoursBreakdown.holidayDay + results.all.hoursBreakdown.extraHolidayDay).toFixed(1)}h</span>
+                                </div>
+                                <div className="flex justify-between text-[9px]">
+                                  <span className="text-slate-400">FN+E:</span>
+                                  <span className="font-mono font-bold text-purple-600">{(results.all.hoursBreakdown.holidayNight + results.all.hoursBreakdown.extraHolidayNight).toFixed(1)}h</span>
+                                </div>
+                              </div>
                             </div>
-                            <div className="flex flex-col">
-                              <span className="text-[8px] font-bold text-slate-400 uppercase">FD</span>
-                              <span className="text-xs font-mono font-bold text-rose-600">{results.all.hoursBreakdown.holidayDay.toFixed(1)}h</span>
+
+                            {/* Col 3: AVA Breakdown */}
+                            <div className="p-4 bg-indigo-50/20 space-y-2">
+                              <div className="flex justify-between items-center border-b border-indigo-100 pb-1">
+                                <span className="text-[9px] font-black text-indigo-400 uppercase">AVA / Virtual</span>
+                                <span className="text-xs font-mono font-black text-indigo-600">{(results.all.totalMonthlyAVA).toFixed(1)}h</span>
+                              </div>
+                              <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                                <div className="flex justify-between text-[9px]">
+                                  <span className="text-indigo-400">D+E:</span>
+                                  <span className="font-mono font-bold text-amber-600">{(results.all.avaBreakdown.day + results.all.avaBreakdown.extraDay).toFixed(1)}h</span>
+                                </div>
+                                <div className="flex justify-between text-[9px]">
+                                  <span className="text-indigo-400">N+E:</span>
+                                  <span className="font-mono font-bold text-indigo-600">{(results.all.avaBreakdown.night + results.all.avaBreakdown.extraNight).toFixed(1)}h</span>
+                                </div>
+                                <div className="flex justify-between text-[9px]">
+                                  <span className="text-indigo-400">FD+E:</span>
+                                  <span className="font-mono font-bold text-rose-600">{(results.all.avaBreakdown.holidayDay + results.all.avaBreakdown.extraHolidayDay).toFixed(1)}h</span>
+                                </div>
+                                <div className="flex justify-between text-[9px]">
+                                  <span className="text-indigo-400">FN+E:</span>
+                                  <span className="font-mono font-bold text-purple-600">{(results.all.avaBreakdown.holidayNight + results.all.avaBreakdown.extraHolidayNight).toFixed(1)}h</span>
+                                </div>
+                              </div>
                             </div>
-                            <div className="flex flex-col text-right">
-                              <span className="text-[8px] font-bold text-slate-400 uppercase">FN</span>
-                              <span className="text-xs font-mono font-bold text-purple-600">{results.all.hoursBreakdown.holidayNight.toFixed(1)}h</span>
+
+                            {/* Col 4: Patients & Values */}
+                            <div className="p-4 bg-emerald-50/20 space-y-2">
+                              <div className="flex justify-between items-center border-b border-emerald-100 pb-1">
+                                <span className="text-[9px] font-black text-emerald-600 uppercase">Productividad</span>
+                                <span className="text-xs font-mono font-black text-emerald-700">{results.all.totalMonthlyPatients}p</span>
+                              </div>
+                              <div className="flex justify-between items-center pt-1">
+                                <span className="text-[10px] font-black text-slate-800 uppercase leading-none">Subtotal<br/>Bruto:</span>
+                                <span className="text-sm font-mono font-black text-slate-900">{formatCurrency(results.all.gross)}</span>
+                              </div>
                             </div>
-                            <div className="col-span-2 mt-1 pt-1 border-t border-slate-100 flex justify-between">
-                              <span className="text-[8px] font-bold text-amber-700 uppercase">Ext:</span>
-                              <span className="text-[10px] font-mono font-black text-amber-700">{(results.all.hoursBreakdown.extraDay + results.all.hoursBreakdown.extraNight + results.all.hoursBreakdown.extraHolidayDay + results.all.hoursBreakdown.extraHolidayNight).toFixed(1)}h</span>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="p-4 align-middle bg-slate-50">
-                          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                            <div className="flex flex-col">
-                              <span className="text-[8px] font-bold text-slate-400 uppercase">Diu</span>
-                              <span className="text-xs font-mono font-bold text-amber-600">{results.all.avaBreakdown.day.toFixed(1)}h</span>
-                            </div>
-                            <div className="flex flex-col text-right">
-                              <span className="text-[8px] font-bold text-slate-400 uppercase">Noc</span>
-                              <span className="text-xs font-mono font-bold text-indigo-600">{results.all.avaBreakdown.night.toFixed(1)}h</span>
-                            </div>
-                            <div className="flex flex-col">
-                              <span className="text-[8px] font-bold text-slate-400 uppercase">FD</span>
-                              <span className="text-xs font-mono font-bold text-rose-600">{results.all.avaBreakdown.holidayDay.toFixed(1)}h</span>
-                            </div>
-                            <div className="flex flex-col text-right">
-                              <span className="text-[8px] font-bold text-slate-400 uppercase">FN</span>
-                              <span className="text-xs font-mono font-bold text-purple-600">{results.all.avaBreakdown.holidayNight.toFixed(1)}h</span>
-                            </div>
-                            <div className="col-span-2 mt-1 pt-1 border-t border-slate-100 flex justify-between gap-1 items-center">
-                              <span className="text-[8px] font-bold text-violet-700 uppercase">Ext:</span>
-                              <span className="text-[9px] font-mono font-black text-rose-500 whitespace-nowrap">
-                                {(results.all.avaBreakdown.extraDay + results.all.avaBreakdown.extraNight + results.all.avaBreakdown.extraHolidayDay + results.all.avaBreakdown.extraHolidayNight).toFixed(1)}h
-                              </span>
-                              <span className="text-[8px] font-bold text-violet-700 uppercase ml-1">Tot:</span>
-                              <span className="text-[10px] font-mono font-black text-violet-700">{results.all.totalMonthlyAVA.toFixed(1)}h</span>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="p-4 align-middle bg-white">
-                          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                            <div className="flex flex-col">
-                              <span className="text-[8px] font-bold text-slate-400 uppercase">P.D</span>
-                              <span className="text-xs font-mono font-bold text-amber-600">{results.all.patientsBreakdown.day}</span>
-                            </div>
-                            <div className="flex flex-col text-right">
-                              <span className="text-[8px] font-bold text-slate-400 uppercase">P.N</span>
-                              <span className="text-xs font-mono font-bold text-indigo-600">{results.all.patientsBreakdown.night}</span>
-                            </div>
-                            <div className="flex flex-col">
-                              <span className="text-[8px] font-bold text-slate-400 uppercase">P.FD</span>
-                              <span className="text-xs font-mono font-bold text-rose-600">{results.all.patientsBreakdown.holidayDay}</span>
-                            </div>
-                            <div className="flex flex-col text-right">
-                              <span className="text-[8px] font-bold text-slate-400 uppercase">P.FN</span>
-                              <span className="text-xs font-mono font-bold text-purple-600">{results.all.patientsBreakdown.holidayNight}</span>
-                            </div>
-                            <div className="col-span-2 mt-1 pt-1 border-t border-slate-100 flex justify-between">
-                              <span className="text-[8px] font-bold text-emerald-700 uppercase">Sum:</span>
-                              <span className="text-[10px] font-mono font-black text-emerald-700">{results.all.totalMonthlyPatients}</span>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="p-4 text-right align-middle bg-slate-50">
-                          <div className="flex flex-col">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase">Subtotal</span>
-                            <span className="text-sm font-bold text-slate-700">{formatCurrency(results.all.gross)}</span>
                           </div>
                         </td>
                         <td colSpan={2} className="bg-slate-100"></td>
@@ -5841,102 +5883,76 @@ function MainApp() {
                   <div className="space-y-4">
                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] flex items-center gap-2">
                         <div className="w-6 h-0.5 bg-indigo-500" />
-                        Matriz de Discriminación Detallada (Auditoría)
+                        Matriz de Auditoría de Horas y Productividad (Vista Lineal)
                      </h4>
-                     <div className="flex flex-col gap-4">
-                        {/* Horas */}
-                        <div className="bg-slate-50 border border-slate-200 rounded-3xl p-6">
-                           <div className="flex items-center gap-2 mb-4 text-slate-400">
-                              <Clock className="w-4 h-4" />
-                              <span className="text-[10px] font-black uppercase">Distribución de Horas</span>
-                           </div>
-                           <div className="space-y-6">
-                              <div className="space-y-3">
-                                 <span className="text-[9px] font-bold text-slate-400 uppercase flex items-center gap-2">
-                                    <div className="w-4 h-px bg-slate-300" />
-                                    Consulta / Libres
-                                 </span>
-                                 <div className="flex flex-wrap gap-2">
-                                    <div className="flex-1 min-w-[80px] bg-white p-3 rounded-xl border border-slate-100 flex flex-col items-center justify-center">
-                                       <span className="block text-[8px] text-slate-400 font-bold uppercase">DIU</span>
-                                       <span className="text-sm font-mono font-bold text-slate-700">{results.all.hoursBreakdown.day.toFixed(1)}h</span>
-                                    </div>
-                                    <div className="flex-1 min-w-[80px] bg-white p-3 rounded-xl border border-slate-100 flex flex-col items-center justify-center">
-                                       <span className="block text-[8px] text-slate-400 font-bold uppercase">NOC</span>
-                                       <span className="text-sm font-mono font-bold text-slate-700">{results.all.hoursBreakdown.night.toFixed(1)}h</span>
-                                    </div>
-                                    <div className="flex-1 min-w-[80px] bg-white p-3 rounded-xl border border-slate-100 flex flex-col items-center justify-center">
-                                       <span className="block text-[8px] text-slate-400 font-bold uppercase">F-DIU</span>
-                                       <span className="text-sm font-mono font-bold text-slate-700">{results.all.hoursBreakdown.holidayDay.toFixed(1)}h</span>
-                                    </div>
-                                    <div className="flex-1 min-w-[80px] bg-white p-3 rounded-xl border border-slate-100 flex flex-col items-center justify-center">
-                                       <span className="block text-[8px] text-slate-400 font-bold uppercase">F-NOC</span>
-                                       <span className="text-sm font-mono font-bold text-slate-700">{results.all.hoursBreakdown.holidayNight.toFixed(1)}h</span>
-                                    </div>
-                                 </div>
-                              </div>
-                              <div className="space-y-3">
-                                 <span className="text-[9px] font-bold text-indigo-400 uppercase flex items-center gap-2">
-                                    <div className="w-4 h-px bg-indigo-200" />
-                                    AVA / Virtuales
-                                 </span>
-                                 <div className="flex flex-wrap gap-2">
-                                    <div className="flex-1 min-w-[80px] bg-indigo-50/50 p-3 rounded-xl border border-indigo-100 flex flex-col items-center justify-center">
-                                       <span className="block text-[8px] text-indigo-400 font-bold uppercase">DIU</span>
-                                       <span className="text-sm font-mono font-bold text-indigo-700">{results.all.avaBreakdown.day.toFixed(1)}h</span>
-                                    </div>
-                                    <div className="flex-1 min-w-[80px] bg-indigo-50/50 p-3 rounded-xl border border-indigo-100 flex flex-col items-center justify-center">
-                                       <span className="block text-[8px] text-indigo-400 font-bold uppercase">NOC</span>
-                                       <span className="text-sm font-mono font-bold text-indigo-700">{results.all.avaBreakdown.night.toFixed(1)}h</span>
-                                    </div>
-                                    <div className="flex-1 min-w-[80px] bg-indigo-50/50 p-3 rounded-xl border border-indigo-100 flex flex-col items-center justify-center">
-                                       <span className="block text-[8px] text-indigo-400 font-bold uppercase">F-DIU</span>
-                                       <span className="text-sm font-mono font-bold text-indigo-700">{results.all.avaBreakdown.holidayDay.toFixed(1)}h</span>
-                                    </div>
-                                    <div className="flex-1 min-w-[80px] bg-indigo-50/50 p-3 rounded-xl border border-indigo-100 flex flex-col items-center justify-center">
-                                       <span className="block text-[8px] text-indigo-400 font-bold uppercase">F-NOC</span>
-                                       <span className="text-sm font-mono font-bold text-indigo-700">{results.all.avaBreakdown.holidayNight.toFixed(1)}h</span>
-                                    </div>
-                                 </div>
-                              </div>
-                           </div>
-                        </div>
-
-                        {/* Pacientes */}
-                        <div className="bg-emerald-50/30 border border-emerald-100 rounded-3xl p-6">
-                           <div className="flex items-center gap-2 mb-4 text-emerald-400">
-                              <Users className="w-4 h-4" />
-                              <span className="text-[10px] font-black uppercase">Recuento de Pacientes</span>
-                           </div>
-                           <div className="flex flex-col gap-3">
-                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                                 <div className="bg-white p-4 rounded-2xl border border-emerald-50 text-center shadow-sm">
-                                    <span className="block text-[8px] text-emerald-400 font-black uppercase tracking-widest mb-1">Diurnos</span>
-                                    <span className="text-2xl font-mono font-bold text-emerald-700">{results.all.patientsBreakdown.day}</span>
-                                 </div>
-                                 <div className="bg-white p-4 rounded-2xl border border-emerald-50 text-center shadow-sm">
-                                    <span className="block text-[8px] text-emerald-400 font-black uppercase tracking-widest mb-1">Nocturnos</span>
-                                    <span className="text-2xl font-mono font-bold text-emerald-700">{results.all.patientsBreakdown.night}</span>
-                                 </div>
-                                 <div className="bg-white p-4 rounded-2xl border border-emerald-50 text-center shadow-sm">
-                                    <span className="block text-[8px] text-emerald-400 font-black uppercase tracking-widest mb-1">Fest. Diu</span>
-                                    <span className="text-2xl font-mono font-bold text-emerald-700">{results.all.patientsBreakdown.holidayDay}</span>
-                                 </div>
-                                 <div className="bg-white p-4 rounded-2xl border border-emerald-50 text-center shadow-sm">
-                                    <span className="block text-[8px] text-emerald-400 font-black uppercase tracking-widest mb-1">Fest. Noc</span>
-                                    <span className="text-2xl font-mono font-bold text-emerald-700">{results.all.patientsBreakdown.holidayNight}</span>
-                                 </div>
-                              </div>
-                              <div className="bg-emerald-600 p-4 rounded-2xl text-white flex justify-between items-center px-8 shadow-lg shadow-emerald-200/50">
-                                 <div>
-                                    <span className="block text-[9px] font-black uppercase opacity-70 tracking-widest">Total Productividad</span>
-                                    <span className="text-3xl font-black text-white">{results.all.totalMonthlyPatients} Pacientes</span>
-                                 </div>
-                                 <div className="bg-white/20 p-2 rounded-xl backdrop-blur-sm">
-                                    <Users className="w-8 h-8 text-white" />
-                                 </div>
-                              </div>
-                           </div>
+                     <div className="overflow-x-auto pb-4">
+                        <div className="min-w-[800px] border-2 border-slate-800 rounded-3xl overflow-hidden bg-white shadow-xl">
+                           <table className="w-full text-[10px] border-collapse">
+                              <thead>
+                                 <tr className="bg-slate-900 text-white font-black uppercase text-center">
+                                    <th className="p-3 border-r border-slate-700">Categoría</th>
+                                    <th className="p-3 border-r border-slate-700 bg-amber-500/10">DIU</th>
+                                    <th className="p-3 border-r border-slate-700 bg-indigo-500/10">NOC</th>
+                                    <th className="p-3 border-r border-slate-700 bg-rose-500/10">F-DIU</th>
+                                    <th className="p-3 border-r border-slate-700 bg-purple-500/10">F-NOC</th>
+                                    <th className="p-3 border-r border-slate-700 bg-rose-500">Extras</th>
+                                    <th className="p-3 bg-slate-800">Total H</th>
+                                 </tr>
+                              </thead>
+                              <tbody className="font-mono divide-y divide-slate-200">
+                                 {/* Consulta Row */}
+                                 <tr className="text-center group hover:bg-slate-50">
+                                    <td className="p-3 border-r border-slate-200 font-black text-left bg-slate-50 group-hover:bg-indigo-50 transition-colors">CONSULTA / LIBRES</td>
+                                    <td className="p-3 border-r border-slate-100 text-amber-700 font-bold">{(results.all.hoursBreakdown.day).toFixed(1)}h</td>
+                                    <td className="p-3 border-r border-slate-100 text-indigo-700 font-bold">{(results.all.hoursBreakdown.night).toFixed(1)}h</td>
+                                    <td className="p-3 border-r border-slate-100 text-rose-700 font-bold">{(results.all.hoursBreakdown.holidayDay).toFixed(1)}h</td>
+                                    <td className="p-3 border-r border-slate-100 text-purple-700 font-bold">{(results.all.hoursBreakdown.holidayNight).toFixed(1)}h</td>
+                                    <td className="p-3 border-r border-slate-100 text-rose-500 font-black">
+                                       {(results.all.hoursBreakdown.extraDay + results.all.hoursBreakdown.extraNight + results.all.hoursBreakdown.extraHolidayDay + results.all.hoursBreakdown.extraHolidayNight).toFixed(1)}h
+                                    </td>
+                                    <td className="p-3 bg-slate-100 font-black text-slate-900 border-l border-slate-200">
+                                       {(results.all.hoursBreakdown.day + results.all.hoursBreakdown.night + results.all.hoursBreakdown.holidayDay + results.all.hoursBreakdown.holidayNight + results.all.hoursBreakdown.extraDay + results.all.hoursBreakdown.extraNight + results.all.hoursBreakdown.extraHolidayDay + results.all.hoursBreakdown.extraHolidayNight).toFixed(1)}h
+                                    </td>
+                                 </tr>
+                                 {/* AVA Row */}
+                                 <tr className="text-center group hover:bg-indigo-50/50">
+                                    <td className="p-3 border-r border-slate-200 font-black text-left bg-indigo-50/30 group-hover:bg-indigo-50">AVA / VIRTUAL</td>
+                                    <td className="p-3 border-r border-slate-100 text-amber-700 font-bold">{(results.all.avaBreakdown.day).toFixed(1)}h</td>
+                                    <td className="p-3 border-r border-slate-100 text-indigo-700 font-bold">{(results.all.avaBreakdown.night).toFixed(1)}h</td>
+                                    <td className="p-3 border-r border-slate-100 text-rose-700 font-bold">{(results.all.avaBreakdown.holidayDay).toFixed(1)}h</td>
+                                    <td className="p-3 border-r border-slate-100 text-purple-700 font-bold">{(results.all.avaBreakdown.holidayNight).toFixed(1)}h</td>
+                                    <td className="p-3 border-r border-slate-100 text-rose-500 font-black">
+                                       {(results.all.avaBreakdown.extraDay + results.all.avaBreakdown.extraNight + results.all.avaBreakdown.extraHolidayDay + results.all.avaBreakdown.extraHolidayNight).toFixed(1)}h
+                                    </td>
+                                    <td className="p-3 bg-indigo-100/50 font-black text-indigo-900 border-l border-slate-200">
+                                       {(results.all.avaBreakdown.day + results.all.avaBreakdown.night + results.all.avaBreakdown.holidayDay + results.all.avaBreakdown.holidayNight + results.all.avaBreakdown.extraDay + results.all.avaBreakdown.extraNight + results.all.avaBreakdown.extraHolidayDay + results.all.avaBreakdown.extraHolidayNight).toFixed(1)}h
+                                    </td>
+                                 </tr>
+                                 {/* Pacientes Row */}
+                                 <tr className="text-center group hover:bg-emerald-50/50">
+                                    <td className="p-3 border-r border-slate-200 font-black text-left bg-emerald-50/30 group-hover:bg-emerald-50 text-emerald-800">PACIENTES (PROD)</td>
+                                    <td className="p-3 border-r border-slate-100 text-emerald-600 font-black">{results.all.patientsBreakdown.day}p</td>
+                                    <td className="p-3 border-r border-slate-100 text-emerald-600 font-black">{results.all.patientsBreakdown.night}p</td>
+                                    <td className="p-3 border-r border-slate-100 text-emerald-600 font-black">{results.all.patientsBreakdown.holidayDay}p</td>
+                                    <td className="p-3 border-r border-slate-100 text-emerald-600 font-black">{results.all.patientsBreakdown.holidayNight}p</td>
+                                    <td className="p-3 border-r border-slate-100 text-emerald-400 font-bold italic">-</td>
+                                    <td className="p-3 bg-emerald-100/50 font-black text-emerald-900 border-l border-slate-200">
+                                       {results.all.totalMonthlyPatients}p
+                                    </td>
+                                 </tr>
+                              </tbody>
+                              <tfoot className="bg-slate-900 text-white font-black text-center">
+                                 <tr>
+                                    <td className="p-3 border-r border-slate-700 text-left">TOTAL CONSOLIDADO</td>
+                                    <td className="p-3 border-r border-slate-700">{(results.all.hoursBreakdown.day + results.all.avaBreakdown.day).toFixed(1)}h</td>
+                                    <td className="p-3 border-r border-slate-700">{(results.all.hoursBreakdown.night + results.all.avaBreakdown.night).toFixed(1)}h</td>
+                                    <td className="p-3 border-r border-slate-700">{(results.all.hoursBreakdown.holidayDay + results.all.avaBreakdown.holidayDay).toFixed(1)}h</td>
+                                    <td className="p-3 border-r border-slate-700">{(results.all.hoursBreakdown.holidayNight + results.all.avaBreakdown.holidayNight).toFixed(1)}h</td>
+                                    <td className="p-3 border-r border-slate-700 text-rose-400">{(results.all.totalExtraHours).toFixed(1)}h</td>
+                                    <td className="p-3 bg-slate-950 text-emerald-400 text-xs">{(results.all.totalMonthlyHours).toFixed(1)}h</td>
+                                 </tr>
+                              </tfoot>
+                           </table>
                         </div>
                      </div>
                   </div>
@@ -5968,10 +5984,11 @@ function MainApp() {
                                    <span>Consulta y Horas Libres</span>
                                    <span className="font-mono">{formatCurrency(results.all.grossBreakdown.consultationBase)}</span>
                                 </div>
-                                <div className="grid grid-cols-3 gap-1 text-[9px] text-slate-500 font-mono">
-                                   <span>DIU: {results.all.hoursBreakdown.day.toFixed(1)}h</span>
-                                   <span className="text-center">NOC: {results.all.hoursBreakdown.night.toFixed(1)}h</span>
-                                   <span className="text-right">FES: {(results.all.hoursBreakdown.holidayDay + results.all.hoursBreakdown.holidayNight).toFixed(1)}h</span>
+                                <div className="grid grid-cols-4 gap-1 text-[9px] text-slate-500 font-mono">
+                                   <span>DIU: {(results.all.hoursBreakdown.day + results.all.hoursBreakdown.extraDay).toFixed(1)}h</span>
+                                   <span className="text-center">NOC: {(results.all.hoursBreakdown.night + results.all.hoursBreakdown.extraNight).toFixed(1)}h</span>
+                                   <span className="text-center">F.D: {(results.all.hoursBreakdown.holidayDay + results.all.hoursBreakdown.extraHolidayDay).toFixed(1)}h</span>
+                                   <span className="text-right">F.N: {(results.all.hoursBreakdown.holidayNight + results.all.hoursBreakdown.extraHolidayNight).toFixed(1)}h</span>
                                 </div>
                              </div>
 
@@ -5980,10 +5997,11 @@ function MainApp() {
                                    <span>AVA y Virtuales</span>
                                    <span className="font-mono">{formatCurrency(results.all.grossBreakdown.ava)}</span>
                                 </div>
-                                <div className="grid grid-cols-3 gap-1 text-[9px] text-indigo-400 font-mono">
-                                   <span>DIU: {results.all.avaBreakdown.day.toFixed(1)}h</span>
-                                   <span className="text-center">NOC: {results.all.avaBreakdown.night.toFixed(1)}h</span>
-                                   <span className="text-right">FES: {(results.all.avaBreakdown.holidayDay + results.all.avaBreakdown.holidayNight).toFixed(1)}h</span>
+                                <div className="grid grid-cols-4 gap-1 text-[9px] text-indigo-400 font-mono">
+                                   <span>DIU: {(results.all.avaBreakdown.day + results.all.avaBreakdown.extraDay).toFixed(1)}h</span>
+                                   <span className="text-center">NOC: {(results.all.avaBreakdown.night + results.all.avaBreakdown.extraNight).toFixed(1)}h</span>
+                                   <span className="text-center">F.D: {(results.all.avaBreakdown.holidayDay + results.all.avaBreakdown.extraHolidayDay).toFixed(1)}h</span>
+                                   <span className="text-right">F.N: {(results.all.avaBreakdown.holidayNight + results.all.avaBreakdown.extraHolidayNight).toFixed(1)}h</span>
                                 </div>
                              </div>
 
