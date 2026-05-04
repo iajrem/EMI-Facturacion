@@ -6150,22 +6150,22 @@ function MainApp() {
                              <div className="w-1 h-4 bg-indigo-600 rounded-full" />
                              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest leading-none">Balance de Patrimonio Acumulado</span>
                           </div>
-                          <div className="grid grid-cols-2 divide-x divide-y divide-slate-100 font-mono">
-                             <div className="p-5 flex flex-col justify-center gap-1 group hover:bg-slate-50 transition-colors">
-                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter leading-none mb-1">Ingreso Bruto</span>
-                                <span className="text-base font-black text-slate-800 leading-none">{formatCurrency(accumulated.gross)}</span>
+                          <div className="grid grid-cols-1 divide-y divide-slate-100 font-mono">
+                             <div className="px-6 py-4 flex justify-between items-center group hover:bg-slate-50 transition-colors">
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">Ingreso Bruto</span>
+                                <span className="text-base font-black text-slate-800">{formatCurrency(accumulated.gross)}</span>
                              </div>
-                             <div className="p-5 flex flex-col justify-center gap-1 group hover:bg-emerald-50/30 transition-colors">
-                                <span className="text-[9px] font-black text-emerald-500 uppercase tracking-tighter leading-none mb-1">Patrimonio (+Prest)</span>
-                                <span className="text-base font-black text-emerald-700 leading-none">{formatCurrency(accumulated.totalGross)}</span>
+                             <div className="px-6 py-4 flex justify-between items-center group hover:bg-emerald-50/30 transition-colors">
+                                <span className="text-[10px] font-black text-emerald-500 uppercase tracking-tighter">Patrimonio (+Prest)</span>
+                                <span className="text-base font-black text-emerald-700">{formatCurrency(accumulated.totalGross)}</span>
                              </div>
-                             <div className="p-5 flex flex-col justify-center gap-1 group hover:bg-rose-50/30 transition-colors">
-                                <span className="text-[9px] font-black text-rose-500 uppercase tracking-tighter leading-none mb-1">Retenciones</span>
-                                <span className="text-base font-black text-rose-700 leading-none">-{formatCurrency(accumulated.deductions)}</span>
+                             <div className="px-6 py-4 flex justify-between items-center group hover:bg-rose-50/30 transition-colors">
+                                <span className="text-[10px] font-black text-rose-500 uppercase tracking-tighter">Retenciones Totales</span>
+                                <span className="text-base font-black text-rose-700">-{formatCurrency(accumulated.deductions)}</span>
                              </div>
-                             <div className="p-5 flex flex-col justify-center bg-indigo-600 text-white shadow-[inset_0_2px_10px_rgba(0,0,0,0.1)]">
-                                <span className="text-[9px] font-black uppercase opacity-70 tracking-tighter leading-none mb-1">Saldo Neto Real</span>
-                                <span className="text-lg font-black leading-none drop-shadow-sm">{formatCurrency(accumulated.net)}</span>
+                             <div className="px-6 py-5 flex justify-between items-center bg-indigo-600 text-white shadow-[inset_0_2px_10px_rgba(0,0,0,0.1)]">
+                                <span className="text-[10px] font-black uppercase opacity-70 tracking-tighter">Saldo Neto Real</span>
+                                <span className="text-lg font-black drop-shadow-sm">{formatCurrency(accumulated.net)}</span>
                              </div>
                           </div>
                         </div>
@@ -6179,34 +6179,34 @@ function MainApp() {
                              </div>
                              <span className="text-[8px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-black uppercase tracking-tighter">Cierre de Vigencia</span>
                           </div>
-                          <div className="grid grid-cols-2 divide-x divide-y divide-slate-100 font-mono">
-                             <div className="p-5 flex flex-col justify-center gap-1 hover:bg-emerald-50/30 transition-colors">
-                                <div className="flex justify-between items-start mb-1">
-                                   <span className="text-[9px] font-black text-emerald-600 uppercase tracking-tighter">Prima</span>
-                                   <span className="text-[7px] text-slate-400 font-bold">JUN / DIC</span>
+                          <div className="grid grid-cols-1 divide-y divide-slate-100 font-mono">
+                             <div className="px-6 py-4 flex justify-between items-center hover:bg-emerald-50/30 transition-colors">
+                                <div className="flex flex-col">
+                                   <span className="text-[10px] font-black text-emerald-600 uppercase tracking-tighter">Prima de Servicios</span>
+                                   <span className="text-[7px] text-slate-400 font-bold">PAGOS JUN / DIC</span>
                                 </div>
-                                <span className="text-base font-black text-emerald-700 leading-none">{formatCurrency(accumulated.prima)}</span>
+                                <span className="text-base font-black text-emerald-700">{formatCurrency(accumulated.prima)}</span>
                              </div>
-                             <div className="p-5 flex flex-col justify-center gap-1 hover:bg-amber-50/30 transition-colors">
-                                <div className="flex justify-between items-start mb-1">
-                                   <span className="text-[9px] font-black text-amber-600 uppercase tracking-tighter">Cesantías</span>
-                                   <span className="text-[7px] text-slate-400 font-bold text-right uppercase">Ley 50</span>
+                             <div className="px-6 py-4 flex justify-between items-center hover:bg-amber-50/30 transition-colors">
+                                <div className="flex flex-col">
+                                   <span className="text-[10px] font-black text-amber-600 uppercase tracking-tighter">Cesantías Consolidado</span>
+                                   <span className="text-[7px] text-slate-400 font-bold uppercase">Caución Ley 50</span>
                                 </div>
-                                <span className="text-base font-black text-amber-700 leading-none">{formatCurrency(accumulated.cesantias)}</span>
+                                <span className="text-base font-black text-amber-700">{formatCurrency(accumulated.cesantias)}</span>
                              </div>
-                             <div className="p-5 flex flex-col justify-center gap-1 hover:bg-violet-50/30 transition-colors">
-                                <div className="flex justify-between items-start mb-1">
-                                   <span className="text-[9px] font-black text-violet-600 uppercase tracking-tighter">Vacaciones</span>
-                                   <span className="text-[7px] text-slate-400 font-bold">15 DÍAS/AÑO</span>
+                             <div className="px-6 py-4 flex justify-between items-center hover:bg-violet-50/30 transition-colors">
+                                <div className="flex flex-col">
+                                   <span className="text-[10px] font-black text-violet-600 uppercase tracking-tighter">Vacaciones Causadas</span>
+                                   <span className="text-[7px] text-slate-400 font-bold">15 DÍAS POR AÑO</span>
                                 </div>
-                                <span className="text-base font-black text-violet-700 leading-none">{formatCurrency(accumulated.vacaciones)}</span>
+                                <span className="text-base font-black text-violet-700">{formatCurrency(accumulated.vacaciones)}</span>
                              </div>
-                             <div className="p-5 flex flex-col justify-center gap-1 hover:bg-rose-50/30 transition-colors">
-                                <div className="flex justify-between items-start mb-1">
-                                   <span className="text-[9px] font-black text-rose-600 uppercase tracking-tighter">Intereses</span>
-                                   <span className="text-[7px] text-slate-400 font-bold italic">12% ANUAL</span>
+                             <div className="px-6 py-4 flex justify-between items-center hover:bg-rose-50/30 transition-colors">
+                                <div className="flex flex-col">
+                                   <span className="text-[10px] font-black text-rose-600 uppercase tracking-tighter">Intereses sobre Cesantías</span>
+                                   <span className="text-[7px] text-slate-400 font-bold italic">12% ANUAL PROPORCIONAL</span>
                                 </div>
-                                <span className="text-base font-black text-rose-700 leading-none">{formatCurrency(accumulated.intereses)}</span>
+                                <span className="text-base font-black text-rose-700">{formatCurrency(accumulated.intereses)}</span>
                              </div>
                           </div>
                         </div>
