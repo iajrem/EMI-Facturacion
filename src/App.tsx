@@ -667,56 +667,45 @@ const calculatePeriodTotals = (
         }
         trisemanaBreakdown[trisemana.id].ord += totalRecordOrd;
         trisemanaBreakdown[trisemana.id].extra += totalRecordExtra;
-      } else {
-        // Record is from this trisemana but NOT in the current period view
-        // If it's a PAST record (before this period), we quantify it for the projection report
-        // but ONLY if it belongs to the same billing month (Periodo de Facturación)
-        const activePeriod = periods.find(p => p.id === selectedPeriodId);
-        if (activePeriod && r.date < activePeriod.startDate) {
-          const rDate = new Date(r.date + 'T12:00:00');
-          const pDate = new Date(activePeriod.startDate + 'T12:00:00');
-          const sameFacturacion = rDate.getMonth() === pDate.getMonth() && rDate.getFullYear() === pDate.getFullYear();
+      } else if (activePeriod && r.date < activePeriod.startDate) {
+        // Record is from this trisemana but BEFORE the active period (Carry-over/Arrastre)
+        // We quantify it for the projection report if it belongs to a trisemana that reaches into this period
+        const rH = r.hours || { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 };
+        const rA = r.ava || { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 };
+        const rP = r.patients || { day: 0, night: 0, holidayDay: 0, holidayNight: 0 };
+        
+        const hSum = (rH.day + rH.night + rH.holidayDay + rH.holidayNight + rH.extraDay + rH.extraNight + rH.extraHolidayDay + rH.extraHolidayNight);
+        const aSum = (rA.day + rA.night + rA.holidayDay + rA.holidayNight + rA.extraDay + rA.extraNight + rA.extraHolidayDay + rA.extraHolidayNight);
+        
+        pastTrisemanasHours += hSum + aSum;
 
-          if (sameFacturacion) {
-            const rH = r.hours || { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 };
-            const rA = r.ava || { day: 0, night: 0, holidayDay: 0, holidayNight: 0, extraDay: 0, extraNight: 0, extraHolidayDay: 0, extraHolidayNight: 0 };
-            const rP = r.patients || { day: 0, night: 0, holidayDay: 0, holidayNight: 0 };
-            
-            const hSum = (rH.day + rH.night + rH.holidayDay + rH.holidayNight + rH.extraDay + rH.extraNight + rH.extraHolidayDay + rH.extraHolidayNight);
-            const aSum = (rA.day + rA.night + rA.holidayDay + rA.holidayNight + rA.extraDay + rA.extraNight + rA.extraHolidayDay + rA.extraHolidayNight);
-            
-            pastTrisemanasHours += hSum + aSum;
-  
-            // Populate the past breakdown
-            pastTrisemanasBreakdown.consultation.day += rH.day;
-            pastTrisemanasBreakdown.consultation.night += rH.night;
-            pastTrisemanasBreakdown.consultation.holidayDay += rH.holidayDay;
-            pastTrisemanasBreakdown.consultation.holidayNight += rH.holidayNight;
-            pastTrisemanasBreakdown.consultation.extraDay += rH.extraDay;
-            pastTrisemanasBreakdown.consultation.extraNight += rH.extraNight;
-            pastTrisemanasBreakdown.consultation.extraHolidayDay += rH.extraHolidayDay;
-            pastTrisemanasBreakdown.consultation.extraHolidayNight += rH.extraHolidayNight;
-  
-            pastTrisemanasBreakdown.ava.day += rA.day;
-            pastTrisemanasBreakdown.ava.night += rA.night;
-            pastTrisemanasBreakdown.ava.holidayDay += rA.holidayDay;
-            pastTrisemanasBreakdown.ava.holidayNight += rA.holidayNight;
-            pastTrisemanasBreakdown.ava.extraDay += rA.extraDay;
-            pastTrisemanasBreakdown.ava.extraNight += rA.extraNight;
-            pastTrisemanasBreakdown.ava.extraHolidayDay += rA.extraHolidayDay;
-            pastTrisemanasBreakdown.ava.extraHolidayNight += rA.extraHolidayNight;
-            
-            if (r.applyPatients) {
-              pastTrisemanasPatients += (rP.day + rP.night + rP.holidayDay + rP.holidayNight);
-            } else {
-              // If they don't apply patients, they produce based on hours
-              pastTrisemanasPatients += hSum;
-            }
-            
-            const pastVal = calculateShiftValue(r, rates);
-            pastTrisemanasGross += (pastVal.base + pastVal.extraSurcharge + pastVal.service + pastVal.avaVirtual);
-          }
+        // Populate the past breakdown
+        pastTrisemanasBreakdown.consultation.day += rH.day;
+        pastTrisemanasBreakdown.consultation.night += rH.night;
+        pastTrisemanasBreakdown.consultation.holidayDay += rH.holidayDay;
+        pastTrisemanasBreakdown.consultation.holidayNight += rH.holidayNight;
+        pastTrisemanasBreakdown.consultation.extraDay += rH.extraDay;
+        pastTrisemanasBreakdown.consultation.extraNight += rH.extraNight;
+        pastTrisemanasBreakdown.consultation.extraHolidayDay += rH.extraHolidayDay;
+        pastTrisemanasBreakdown.consultation.extraHolidayNight += rH.extraHolidayNight;
+
+        pastTrisemanasBreakdown.ava.day += rA.day;
+        pastTrisemanasBreakdown.ava.night += rA.night;
+        pastTrisemanasBreakdown.ava.holidayDay += rA.holidayDay;
+        pastTrisemanasBreakdown.ava.holidayNight += rA.holidayNight;
+        pastTrisemanasBreakdown.ava.extraDay += rA.extraDay;
+        pastTrisemanasBreakdown.ava.extraNight += rA.extraNight;
+        pastTrisemanasBreakdown.ava.extraHolidayDay += rA.extraHolidayDay;
+        pastTrisemanasBreakdown.ava.extraHolidayNight += rA.extraHolidayNight;
+        
+        if (r.applyPatients) {
+          pastTrisemanasPatients += (rP.day + rP.night + rP.holidayDay + rP.holidayNight);
+        } else {
+          pastTrisemanasPatients += (rH.day + rH.night + rH.holidayDay + rH.holidayNight);
         }
+        
+        const pastVal = calculateShiftValue(r, rates);
+        pastTrisemanasGross += (pastVal.base + pastVal.extraSurcharge + pastVal.service + pastVal.avaVirtual);
       }
 
       // Both regular shift hours and manual additional hours (up to threshold) count towards trisemana
@@ -1075,6 +1064,7 @@ const calculatePeriodTotals = (
       service: totalP,
       ava: totalAVA
     },
+    totalPatients: (patientsBreakdown.day + patientsBreakdown.night + patientsBreakdown.holidayDay + patientsBreakdown.holidayNight) + pastTrisemanasPatients,
     additionalShiftsCount: records.filter(r => r.isAdditionalShift).length
   };
 };
@@ -5032,7 +5022,7 @@ function MainApp() {
                 <div className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-full bg-slate-800 text-white flex items-center justify-center font-bold text-sm">3</div>
                   <h2 className="text-xl font-bold text-slate-800">
-                    {viewingArchive ? `Extracto: ${viewingArchive.name}` : 'Bitácora de Turnos'}
+                    {viewingArchive ? `Extracto: ${viewingArchive.name}` : 'Bitácora de Turnos (Periodo de Facturación)'}
                   </h2>
                 </div>
                 {selectedRecordIds.length > 0 && (
@@ -5116,11 +5106,19 @@ function MainApp() {
                   <div className="space-y-4">
                     {/* Global Totals */}
                     <div className="flex flex-wrap items-center gap-6 pb-4 border-b border-slate-100">
-                      <div className="bg-indigo-600 px-4 py-3 rounded-2xl text-white shadow-lg shadow-indigo-200">
-                        <p className="text-[10px] opacity-80 uppercase font-black tracking-widest mb-1">Total Consolidado Horas</p>
-                        <p className="text-2xl font-mono font-black">
-                          {results.all.totalMonthlyHours.toFixed(1)}h
-                        </p>
+                      <div className="flex flex-wrap items-center gap-4">
+                        <div className="bg-indigo-600 px-4 py-3 rounded-2xl text-white shadow-lg shadow-indigo-200">
+                          <p className="text-[10px] opacity-80 uppercase font-black tracking-widest mb-1 leading-none">Total Consolidado Horas</p>
+                          <p className="text-xl font-mono font-black leading-none">
+                            {results.all.totalMonthlyHours.toFixed(1)}h
+                          </p>
+                        </div>
+                        <div className="bg-emerald-600 px-4 py-3 rounded-2xl text-white shadow-lg shadow-emerald-100">
+                          <p className="text-[10px] opacity-80 uppercase font-black tracking-widest mb-1 leading-none">Total Pacientes</p>
+                          <p className="text-xl font-mono font-black leading-none">
+                            {results.all.totalPatients}
+                          </p>
+                        </div>
                       </div>
                       <div className="flex gap-6">
                         <div>
@@ -5238,8 +5236,31 @@ function MainApp() {
                         <tr>
                           <td colSpan={6} className="p-10 text-center text-slate-400 italic">No hay turnos registrados aún. Agrega tu primer turno arriba.</td>
                         </tr>
-                      ) : (
-                        (viewingArchive ? viewingArchive.records : records).map((record) => (
+                      ) : (() => {
+                        const recs = (viewingArchive ? viewingArchive.records : records);
+                        const groups: { [key: string]: { name: string, records: ShiftRecord[] } } = {};
+                        recs.forEach(r => {
+                          const t = r.trisemanaId 
+                            ? trisemanas.find(tri => tri.id === r.trisemanaId)
+                            : trisemanas.find(tri => r.date >= tri.startDate && r.date <= tri.endDate);
+                          const gId = t ? t.id : 'unknown';
+                          if (!groups[gId]) {
+                            groups[gId] = { name: t ? t.name : 'Sin Trisemana Asignada', records: [] };
+                          }
+                          groups[gId].records.push(r);
+                        });
+
+                        return Object.entries(groups).map(([gId, group]) => (
+                          <React.Fragment key={gId}>
+                            <tr className="bg-slate-100/50 border-y border-slate-200">
+                              <td colSpan={10} className="px-4 py-2">
+                                <div className="flex items-center gap-2">
+                                  <Clock className="w-3 h-3 text-indigo-500" />
+                                  <span className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em]">{group.name}</span>
+                                </div>
+                              </td>
+                            </tr>
+                            {group.records.sort((a,b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime)).map((record) => (
                           <motion.tr 
                             key={record.id}
                             initial={{ opacity: 0, y: 10 }}
@@ -5492,8 +5513,10 @@ function MainApp() {
                               </button>
                             </td>
                           </motion.tr>
-                        ))
-                      )}
+                            ))}
+                          </React.Fragment>
+                        ));
+                      })()}
                     </AnimatePresence>
                   </tbody>
                   {(viewingArchive ? viewingArchive.records : records).length > 0 && (
